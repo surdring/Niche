@@ -12,6 +12,11 @@
 4. **插件化扩展**: 核心精简，能力通过插件注入
 5. **流式原生**: 默认流式传输，支持增量解析
 
+## 范围与关键决策（当前迭代）
+
+- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
+- **多租户/配额**: 当前迭代不实现配额/计费与管理后台能力，但会预埋 `tenantId` 并在全链路实现租户隔离（接口/数据模型/查询默认按 `tenantId` 过滤）。
+
 ## 架构
 
 ### 整体架构图
@@ -45,9 +50,8 @@ graph TB
     end
 
     subgraph "Infrastructure"
-        VectorDB[向量数据库适配器]
+        RAGFlow[RAGFlow（外部检索服务）]
         Cache[Redis缓存]
-        Storage[文档存储]
         Telemetry[OpenTelemetry]
     end
 
@@ -62,7 +66,7 @@ graph TB
     WS --> Auth
     Router --> SDK
     Agent --> SDK
-    RAG --> VectorDB
+    RAG --> RAGFlow
     RAG --> SDK
     SDK --> Stream
     SDK --> Tools
@@ -78,7 +82,7 @@ graph TB
 | Middleware Layer | 横切关注点处理 | 认证、限流、护栏、日志 |
 | Core Engine | 业务编排逻辑 | Router, Agent, RAG, Prompt |
 | AI SDK Layer | 模型交互抽象 | Vercel AI SDK Core |
-| Infrastructure | 基础设施适配 | VectorDB, Cache, Telemetry |
+| Infrastructure | 基础设施适配 | RAGFlow, Cache, Telemetry |
 
 ## 组件与接口
 
@@ -121,41 +125,16 @@ interface IRoutingRule {
 }
 ```
 
-### 2. 向量数据库适配器 (Vector Store Adapter)
+### 2. 外部检索数据结构（RAGFlow）
 
-统一的向量数据库接口，屏蔽底层实现差异。
+当前迭代通过外部检索服务（RAGFlow）完成文档摄入与检索；框架内部仅负责 HTTP 调用、错误处理与数据结构映射。
 
 ```typescript
-interface IVectorStore {
-  /**
-   * 添加文档到向量库
-   */
-  addDocuments(documents: IDocument[]): Promise<string[]>;
-  
-  /**
-   * 相似度搜索
-   */
-  similaritySearch(
-    query: string,
-    options?: ISearchOptions
-  ): Promise<ISearchResult[]>;
-  
-  /**
-   * 删除文档
-   */
-  deleteDocuments(ids: string[]): Promise<void>;
-  
-  /**
-   * 按元数据过滤
-   */
-  filter(metadata: Record<string, unknown>): IVectorStore;
-}
-
 interface IDocument {
   id?: string;
+  tenantId: string;
   content: string;
   metadata: IDocumentMetadata;
-  embedding?: number[];
 }
 
 interface IDocumentMetadata {
@@ -177,6 +156,91 @@ interface ICitation {
   chunkIndex: number;
   startOffset: number;
   endOffset: number;
+  pageNumber?: number;
+  boundingBoxes?: Array<{
+    pageNumber: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+  tocPath?: string[];
+  chapterTitle?: string;
+  sectionTitle?: string;
+  sourceUrl?: string;
+}
+```
+
+### 2.1 研究协作智能体扩展数据结构（Research Copilot）
+
+为支持需求 24-28（PDF 页码级引用、联网来源入库、研究项目工作台、导出、强引用模式），在核心数据结构之上补充以下概念模型：
+
+```typescript
+type SourceType = 'pdf' | 'web' | 'text' | 'unknown';
+
+interface ISource {
+  id: string;
+  tenantId: string;
+  type: SourceType;
+  title?: string;
+  url?: string;
+  summary?: string;
+  publishedAt?: string;
+  contentHash?: string;
+  documentId?: string;
+  createdAt: number;
+}
+
+interface IResearchProject {
+  id: string;
+  tenantId: string;
+  title: string;
+  description?: string;
+  goals?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface IResearchQuestion {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  question: string;
+  status: 'open' | 'answered' | 'archived';
+  createdAt: number;
+}
+
+interface IResearchNote {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  title: string;
+  content: string;
+  citations: ICitation[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface IClaim {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  text: string;
+  importance: 'low' | 'medium' | 'high';
+  citations: ICitation[];
+  confidence?: number;
+  createdAt: number;
+}
+
+interface ITaskItem {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  title: string;
+  status: 'todo' | 'doing' | 'done';
+  type: 'to-read' | 'to-verify' | 'to-write' | 'custom';
+  relatedSourceId?: string;
+  createdAt: number;
 }
 ```
 
@@ -187,12 +251,12 @@ interface ICitation {
 ```typescript
 interface IRAGPipeline {
   /**
-   * 摄入文档
+   * 摄入文档（通过外部检索服务完成）
    */
-  ingest(source: string | Buffer, options?: IIngestOptions): Promise<IIngestResult>;
+  ingest(document: IIngestDocument, options?: IIngestOptions): Promise<IIngestResult>;
   
   /**
-   * 检索相关上下文
+   * 检索相关上下文（通过外部检索服务完成）
    */
   retrieve(query: string, options?: IRetrieveOptions): Promise<IRetrieveResult>;
   
@@ -207,10 +271,16 @@ interface IRAGPipeline {
   streamGenerate(query: string, options?: IGenerateOptions): AsyncIterable<IStreamChunk>;
 }
 
+interface IIngestDocument {
+  content: string | Buffer;
+  source: string;
+  mimeType: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface IIngestOptions {
-  chunker: 'semantic' | 'paragraph' | 'sliding' | 'parent-child';
-  chunkSize?: number;
-  chunkOverlap?: number;
+  knowledgeBaseId?: string;
+  collectionId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -218,6 +288,8 @@ interface IRetrieveOptions {
   topK: number;
   minScore?: number;
   rerank?: boolean;
+  knowledgeBaseId?: string;
+  collectionId?: string;
   filter?: Record<string, unknown>;
 }
 
@@ -271,7 +343,7 @@ interface ITool {
 }
 
 interface IAgentEvent {
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'answer' | 'error';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'reading' | 'generating' | 'answer' | 'complete' | 'cancelled' | 'error';
   content: unknown;
   timestamp: number;
 }
@@ -286,6 +358,70 @@ interface IAgentStep {
   thought?: string;
   toolCall?: { name: string; args: unknown };
   toolResult?: unknown;
+}
+```
+
+### 4.1 Agentic RAG 工具约定（Hybrid Search + Deep Read）
+
+为满足混合检索、项目范围检索与按页深读（Requirements 34-36），推荐定义以下工具形态（工具本身仍通过 Zod 参数校验与 Adapter/Service 实现）：
+
+```typescript
+// 混合检索：keyword + vector (+ rerank 可选)
+export const SearchKnowledgeBaseSchema = z.object({
+  query: z.string().min(1),
+  topK: z.number().int().positive().default(10),
+  filters: z.object({
+    projectId: z.string().optional(),
+    documentId: z.string().optional(),
+    year: z.number().int().optional(),
+  }).optional(),
+});
+
+// 深读：按页范围读取（PDF）
+export const ReadDocumentSchema = z.object({
+  documentId: z.string().min(1),
+  pageStart: z.number().int().nonnegative(),
+  pageEnd: z.number().int().nonnegative(),
+});
+
+// Step Events：用于 Thinking UI
+export const AgentStepEventSchema = z.object({
+  type: z.enum(['thinking', 'tool_call', 'tool_result', 'reading', 'generating', 'answer', 'complete', 'cancelled', 'error']),
+  timestamp: z.number().int(),
+  content: z.unknown(),
+});
+```
+
+### 4.2 本地模型 Provider（llama.cpp server）
+
+为支持本地推理（Requirements 37.1-37.2），新增一种 Provider 适配：通过 HTTP 连接本地推理服务（例如 llama.cpp server），并实现与现有 Provider 统一的接口。
+
+关键点：
+
+- **能力差异**：本地模型可能不稳定支持工具调用/结构化输出，需要通过提示词与输出校验进行防御性对齐。
+- **回退策略**：当工具调用/结构化输出失败达到重试上限，应触发回退模型或返回结构化错误。
+
+### 4.3 异步摄入/解析队列（Ingest Job Queue）
+
+为支持大文件解析与非阻塞摄入（Requirements 37.3-37.4），将摄入流程拆分为任务：上传 -> 入队 -> 解析/入库 -> 状态查询。
+
+```typescript
+type IngestJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+interface IIngestJob {
+  id: string;
+  tenantId: string;
+  source: string;
+  mimeType: string;
+  status: IngestJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  error?: { code: string; message: string; retryable: boolean };
+}
+
+interface IIngestJobQueue {
+  enqueue(document: IIngestDocument, options?: IIngestOptions): Promise<IIngestJob>;
+  getJob(jobId: string, tenantId: string): Promise<IIngestJob | null>;
 }
 ```
 
@@ -410,53 +546,14 @@ interface ITokenUsage {
 
 interface IUsageContext {
   requestId: string;
-  tenantId?: string;
   model: string;
   feature: string;
 }
 ```
 
-### 8. 租户管理 (Tenant Manager)
+### 8. 租户管理 (Tenant Manager)（后续/暂不实现）
 
-多租户隔离和配额管理。
-
-```typescript
-interface ITenantManager {
-  /**
-   * 创建租户
-   */
-  createTenant(config: ITenantConfig): Promise<ITenant>;
-  
-  /**
-   * 检查配额
-   */
-  checkQuota(tenantId: string, usage: ITokenUsage): Promise<IQuotaResult>;
-  
-  /**
-   * 获取用量统计
-   */
-  getUsageStats(tenantId: string, period: ITimePeriod): Promise<IUsageStats>;
-}
-
-interface ITenantConfig {
-  name: string;
-  plan: 'free' | 'pro' | 'enterprise';
-  quotas: {
-    dailyTokens: number;
-    monthlyTokens: number;
-    requestsPerMinute: number;
-  };
-}
-
-interface IQuotaResult {
-  allowed: boolean;
-  remaining: {
-    dailyTokens: number;
-    monthlyTokens: number;
-  };
-  resetAt: number;
-}
-```
+当前迭代不实现多租户隔离与配额管理能力。
 
 ### 9. 流式处理器 (Stream Handler)
 
@@ -493,39 +590,42 @@ interface IStreamChunk {
 
 ```mermaid
 erDiagram
-    Tenant ||--o{ ApiKey : has
-    Tenant ||--o{ Document : owns
-    Tenant ||--o{ UsageRecord : generates
-    
+    Source ||--o{ Document : ingests
     Document ||--o{ Chunk : contains
     Chunk ||--o{ Embedding : has
     
     Conversation ||--o{ Message : contains
     Message ||--o{ Citation : references
+
+    ResearchProject ||--o{ ResearchQuestion : has
+    ResearchProject ||--o{ ResearchNote : has
+    ResearchProject ||--o{ Claim : has
+    ResearchProject ||--o{ TaskItem : has
+    ResearchNote ||--o{ Citation : cites
+    Claim ||--o{ Citation : supportedBy
     
     EvalDataset ||--o{ EvalCase : contains
     EvalRun ||--o{ EvalResult : produces
 
-    Tenant {
-        string id PK
-        string name
-        string plan
-        json quotas
-        timestamp createdAt
-    }
-    
     ApiKey {
         string id PK
-        string tenantId FK
         string keyHash
         json permissions
-        json quotas
         timestamp expiresAt
+    }
+
+    Source {
+        string id PK
+        string type
+        string title
+        string url
+        string contentHash
+        string documentId
+        timestamp createdAt
     }
     
     Document {
         string id PK
-        string tenantId FK
         string source
         string contentHash
         json metadata
@@ -551,7 +651,6 @@ erDiagram
     
     Conversation {
         string id PK
-        string tenantId FK
         json context
         timestamp createdAt
         timestamp updatedAt
@@ -573,11 +672,59 @@ erDiagram
         string chunkId FK
         int startOffset
         int endOffset
+        int pageNumber
+        json meta
+    }
+
+    ResearchProject {
+        string id PK
+        string title
+        string description
+        json goals
+        timestamp createdAt
+        timestamp updatedAt
+    }
+
+    ResearchQuestion {
+        string id PK
+        string projectId FK
+        string question
+        string status
+        timestamp createdAt
+    }
+
+    ResearchNote {
+        string id PK
+        string projectId FK
+        string title
+        string content
+        json citations
+        timestamp createdAt
+        timestamp updatedAt
+    }
+
+    Claim {
+        string id PK
+        string projectId FK
+        string text
+        string importance
+        json citations
+        float confidence
+        timestamp createdAt
+    }
+
+    TaskItem {
+        string id PK
+        string projectId FK
+        string title
+        string status
+        string type
+        string relatedSourceId
+        timestamp createdAt
     }
     
     UsageRecord {
         string id PK
-        string tenantId FK
         string model
         int promptTokens
         int completionTokens
@@ -645,7 +792,25 @@ export const ChatResponseSchema = z.object({
     text: z.string(),
     startOffset: z.number(),
     endOffset: z.number(),
+    pageNumber: z.number().int().nonnegative().optional(),
+    boundingBoxes: z.array(z.object({
+      pageNumber: z.number().int().nonnegative(),
+      x: z.number(),
+      y: z.number(),
+      width: z.number(),
+      height: z.number(),
+    })).optional(),
+    tocPath: z.array(z.string()).optional(),
+    chapterTitle: z.string().optional(),
+    sectionTitle: z.string().optional(),
+    sourceUrl: z.string().optional(),
   })),
+  citationQuality: z.object({
+    citationCount: z.number().int().nonnegative(),
+    coverage: z.number().min(0).max(1).optional(),
+    missingFields: z.array(z.string()).default([]),
+    evidenceStatus: z.enum(['sufficient', 'insufficient', 'unknown']).default('unknown'),
+  }).optional(),
   usage: z.object({
     promptTokens: z.number(),
     completionTokens: z.number(),
@@ -658,6 +823,8 @@ export const ChatResponseSchema = z.object({
 // RAG 请求 Schema
 export const RAGQuerySchema = z.object({
   query: z.string().min(1),
+  knowledgeBaseId: z.string().optional(),
+  collectionId: z.string().optional(),
   topK: z.number().int().positive().default(5),
   minScore: z.number().min(0).max(1).optional(),
   rerank: z.boolean().default(false),
@@ -670,9 +837,8 @@ export const IngestDocumentSchema = z.object({
   content: z.string().or(z.instanceof(Buffer)),
   source: z.string(),
   mimeType: z.string(),
-  chunker: z.enum(['semantic', 'paragraph', 'sliding', 'parent-child']).default('semantic'),
-  chunkSize: z.number().int().positive().default(512),
-  chunkOverlap: z.number().int().nonnegative().default(50),
+  knowledgeBaseId: z.string().optional(),
+  collectionId: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -684,6 +850,82 @@ export const AgentTaskSchema = z.object({
   maxSteps: z.number().int().positive().default(10),
   timeout: z.number().int().positive().default(60000),
 });
+
+// Sources（联网搜索与入库）Schema
+export const SourceSearchQuerySchema = z.object({
+  query: z.string().min(1),
+  topK: z.number().int().positive().default(10),
+});
+
+export const SourceSearchResultSchema = z.object({
+  title: z.string(),
+  url: z.string(),
+  summary: z.string().optional(),
+  publishedAt: z.string().optional(),
+});
+
+export const SourceImportSchema = z.object({
+  url: z.string().optional(),
+  title: z.string().optional(),
+  content: z.string().optional(),
+  projectId: z.string().optional(),
+  knowledgeBaseId: z.string().optional(),
+  collectionId: z.string().optional(),
+});
+
+// Research Project Schema
+export const ResearchProjectSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  goals: z.array(z.string()).optional(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+
+export const ResearchNoteSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  projectId: z.string(),
+  title: z.string().min(1),
+  content: z.string(),
+  citations: z.array(ChatResponseSchema.shape.citations.element),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+
+export const ClaimSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  projectId: z.string(),
+  text: z.string().min(1),
+  importance: z.enum(['low', 'medium', 'high']),
+  citations: z.array(ChatResponseSchema.shape.citations.element),
+  confidence: z.number().min(0).max(1).optional(),
+  createdAt: z.number().int(),
+});
+
+// Export Schema
+export const ExportMarkdownSchema = z.object({
+  projectId: z.string(),
+  noteIds: z.array(z.string()).optional(),
+  includeCitations: z.boolean().default(true),
+});
+
+export const ExportNotionSchema = z.object({
+  projectId: z.string(),
+  notionToken: z.string().optional(),
+  parentPageId: z.string().optional(),
+  includeCitations: z.boolean().default(true),
+});
+
+// 强引用模式 Schema
+export const StrictCitationConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  answerPolicy: z.enum(['strict', 'force']).default('strict'),
+  maxRetries: z.number().int().positive().default(2),
+});
 ```
 
 ## 正确性属性
@@ -692,13 +934,13 @@ export const AgentTaskSchema = z.object({
 
 基于需求文档的验收标准，以下是系统必须满足的正确性属性：
 
-### Property 1: 向量库适配器接口一致性
+### Property 1: 向量库适配器接口一致性（后续/暂不实现）
 
-*For any* 向量库适配器实现（Chroma、Pinecone、Milvus等），调用相同的 `IVectorStore` 接口方法应产生语义等价的结果。
+（后续/暂不实现）用于未来引入“内部向量库/适配器”时的正确性约束；当前迭代使用 RAGFlow 外部检索，不适用。
 
 **Validates: Requirements 1.5, 1.6**
 
-### Property 2: 文档分块完整性
+### Property 2: 文档分块完整性（后续/暂不实现）
 
 *For any* 输入文档，分块后所有块的内容拼接应能还原原始文档内容（不丢失信息），且每个块的 `startOffset` 和 `endOffset` 应正确指向原文位置。
 
@@ -796,7 +1038,7 @@ export const AgentTaskSchema = z.object({
 
 ### Property 18: 租户配额执行
 
-*For any* 租户，当 Token 用量超过配置的配额上限时，后续请求应被限流或阻断，返回明确的配额超限错误。
+（后续/暂不实现）
 
 **Validates: Requirements 21.4**
 
@@ -812,6 +1054,127 @@ export const AgentTaskSchema = z.object({
 
 **Validates: Requirements 23.2**
 
+### Property 25: PDF 页码级引用定位一致性
+
+*For any* 从 PDF 文档摄入得到的引用（包含 `pageNumber` 与 offset 信息），引用应能稳定定位回原文位置；当 `pageNumber` 存在时，`startOffset/endOffset` 对应文本片段必须落在该页的文本范围内（或等价定位策略）。
+
+**Validates: Requirements 24.1, 24.3**
+
+### Property 26: 来源去重确定性
+
+*For any* 来源入库请求集合，在相同的 URL 规范化与内容哈希策略配置下，重复导入同一来源应返回相同的 canonical Source（或相同的去重决策），且不产生重复的 Document/Source 记录。
+
+**Validates: Requirements 25.5**
+
+### Property 27: 导出幂等性
+
+*For any* 相同的研究项目导出请求（相同 projectId、noteIds、includeCitations），导出器在幂等模式下应生成等价输出：
+
+- Markdown：内容与引用段落一致（允许时间戳/导出元数据不同）
+- Notion：同一目标页面应被更新而非重复创建（或返回明确的冲突策略结果）
+
+**Validates: Requirements 27.1, 27.2**
+
+### Property 28: 强引用模式合规性
+
+*For any* 启用强引用模式的“关键结论”输出：
+
+- 系统应保证关键字段至少包含一个有效引用；若首次生成缺少引用，系统必须在不超过配置重试次数的前提下触发自修复或回退。
+- 当 `answerPolicy = 'strict'` 且仍失败时，系统必须返回结构化错误并指出缺失字段。
+- 当 `answerPolicy = 'force'` 且仍失败时，系统必须返回最佳努力输出，但必须通过机器可校验字段显式标注 `missingFields` 与 `evidenceStatus = 'insufficient'`。
+- 禁止伪造引用：响应中出现的任何 citation 必须可追溯到真实检索/深读结果（documentId/chunkIndex/pageNumber/offset 等一致）。
+
+**Validates: Requirements 28.1, 28.2, 28.3**
+
+### Property 29: 租户隔离不泄漏
+
+*For any* 两个不同 `tenantId` 的请求上下文：
+
+- 租户 A 写入的任何资源（Document/Source/Project/Note/Claim/Task/Conversation/Usage）都不得被租户 B 读取到
+- 租户 B 也不得影响租户 A 的资源（更新/删除/导出）
+
+**Validates: Requirements 29.1, 29.2, 29.3, 29.4**
+
+### Property 30: RAGFlow 字段契约稳定性
+
+*For any* RAGFlow 检索返回结果：
+
+- 映射后的 `ICitation` 必须满足字段完整性（至少 `documentId/chunkIndex/startOffset/endOffset`）
+- 当配置要求页码/章节信息时，系统必须验证字段存在；若缺失则触发降级并记录告警
+
+**Validates: Requirements 30.1, 30.2, 30.3, 30.4**
+
+### Property 31: 长文档 Map-Reduce 产出一致性
+
+*For any* 长文档分段处理流程（分段摘要 -> 汇总）：
+
+- 汇总结果必须仅基于分段结果生成（不应依赖未入库的隐式上下文）
+- 分段结果应可缓存复用，并在相同输入与配置下产生确定的输出结构（允许措辞差异但结构字段必须存在）
+
+**Validates: Requirements 31.1, 31.2, 31.3, 31.4**
+
+### Property 32: Deep Parsing 结构保真
+
+*For any* 复杂版式 PDF 摄入结果：
+
+- chunk 的页码与基本定位信息必须可用
+- 表格结构在导出/展示场景下不得退化为明显乱序文本（允许降级，但必须明确标记降级）
+
+**Validates: Requirements 32.1, 32.2, 32.3, 32.4**
+
+### Property 33: 坐标引用可视化定位一致性
+
+*For any* 带 `boundingBoxes` 的 citation：
+
+- 坐标必须落在对应 `pageNumber` 范围内
+- 前端高亮区域应与引用原文一致（当坐标不可用时应回退到页码/offset 定位并标注原因）
+
+**Validates: Requirements 33.1, 33.2, 33.3**
+
+### Property 34: 混合检索范围约束
+
+*For any* 设置了 `filters.projectId` 的检索请求：检索结果必须仅来自该 Project 绑定的资料集合（不得跨项目混入）。
+
+**Validates: Requirements 34.1, 34.4**
+
+### Property 35: 深读工具边界正确性
+
+*For any* `read_document(documentId, pageStart, pageEnd)`：
+
+- 当页范围超出边界必须返回结构化错误
+- 当成功返回时必须保留页码与引用定位信息
+
+**Validates: Requirements 35.1, 35.2, 35.3**
+
+### Property 36: Agent Step Events 顺序与完备性
+
+*For any* Agentic RAG 的多步执行：
+
+- 必须产生可解析的 step events 序列（thinking/tool_call/tool_result/reading/generating/...）
+- 结束时必须以 `complete` 或 `cancelled` 或 `error` 收敛
+
+**Validates: Requirements 36.1, 36.2, 36.3**
+
+### Property 37: 异步摄入状态机正确性
+
+*For any* ingest job：
+
+- 状态转换只能按 queued -> processing -> completed/failed
+- failed 必须附带 retryable 标记与结构化错误
+- 按 tenantId 查询不得越权
+
+**Validates: Requirements 37.3, 37.4, 29.2**
+
+### Property 38: 课题启动幂等性与可恢复性
+
+*For any* 课题启动（bootstrap）执行：
+
+- 在相同 `tenantId` + `projectId` + 相同来源集合（按 URL 规范化或内容哈希等价）下重复执行，不得产生重复的 Source/Document（允许产生版本信息或返回同一 canonical Source）
+- 当用户取消 bootstrap 时，系统必须收敛到 `cancelled`（或等价状态），并保留可恢复的阶段信息与已完成的中间结果，以便后续继续执行
+- 当 bootstrap 失败时，必须返回结构化错误（含阶段信息）并标记是否可重试
+
+**Validates: Requirements 38.5, 38.7, 38.8, 38.10**
+
 ## 错误处理
 
 ### 错误分类
@@ -822,14 +1185,13 @@ enum ErrorCode {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   AUTHENTICATION_ERROR = 'AUTHENTICATION_ERROR',
   AUTHORIZATION_ERROR = 'AUTHORIZATION_ERROR',
-  QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
   RATE_LIMITED = 'RATE_LIMITED',
   GUARDRAIL_BLOCKED = 'GUARDRAIL_BLOCKED',
   
   // 服务端错误 (5xx)
   MODEL_ERROR = 'MODEL_ERROR',
   PROVIDER_UNAVAILABLE = 'PROVIDER_UNAVAILABLE',
-  VECTOR_STORE_ERROR = 'VECTOR_STORE_ERROR',
+  RETRIEVAL_ERROR = 'RETRIEVAL_ERROR',
   CACHE_ERROR = 'CACHE_ERROR',
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   
@@ -852,7 +1214,7 @@ interface IFrameworkError {
 | 错误类型 | 处理策略 | 用户提示 |
 |---------|---------|---------|
 | VALIDATION_ERROR | 返回详细字段错误 | 请检查输入参数 |
-| QUOTA_EXCEEDED | 返回配额信息和重置时间 | 配额已用尽，请升级或等待重置 |
+| RETRIEVAL_ERROR | 返回外部检索错误信息（可重试/降级） | 检索服务暂时不可用，请稍后重试 |
 | GUARDRAIL_BLOCKED | 返回违规原因 | 请求包含不允许的内容 |
 | MODEL_ERROR | 重试或降级到备用模型 | 服务暂时不可用，请稍后重试 |
 | PROVIDER_UNAVAILABLE | 自动故障转移 | （透明处理，用户无感知） |
@@ -910,46 +1272,7 @@ interface IFallbackConfig {
 import { fc } from '@fast-check/vitest';
 import { describe, it, expect } from 'vitest';
 
-describe('Vector Store Adapter', () => {
-  /**
-   * **Feature: vertical-ai-framework, Property 1: 向量库适配器接口一致性**
-   * **Validates: Requirements 1.5, 1.6**
-   */
-  it.prop([fc.array(fc.record({
-    content: fc.string({ minLength: 1 }),
-    metadata: fc.record({ source: fc.string() })
-  }), { minLength: 1 })])('should produce equivalent results across adapters', async (documents) => {
-    const chromaAdapter = new ChromaVectorStore(config);
-    const pineconeAdapter = new PineconeVectorStore(config);
-    
-    const chromaIds = await chromaAdapter.addDocuments(documents);
-    const pineconeIds = await pineconeAdapter.addDocuments(documents);
-    
-    expect(chromaIds.length).toBe(pineconeIds.length);
-    expect(chromaIds.length).toBe(documents.length);
-  });
-});
-
-describe('Document Chunker', () => {
-  /**
-   * **Feature: vertical-ai-framework, Property 2: 文档分块完整性**
-   * **Validates: Requirements 1.3, 1.4**
-   */
-  it.prop([fc.string({ minLength: 100 })])('should preserve document content after chunking', async (content) => {
-    const chunker = new SemanticChunker({ chunkSize: 50 });
-    const chunks = await chunker.chunk(content);
-    
-    // 验证分块覆盖完整内容
-    const reconstructed = chunks.map(c => c.content).join('');
-    expect(reconstructed).toContain(content.trim());
-    
-    // 验证偏移量正确性
-    for (const chunk of chunks) {
-      expect(chunk.startOffset).toBeGreaterThanOrEqual(0);
-      expect(chunk.endOffset).toBeGreaterThan(chunk.startOffset);
-    }
-  });
-});
+// Property 1/2 属于后续迭代（当前迭代使用 RAGFlow 外部检索），此处不提供实现示例。
 
 describe('Guardrails', () => {
   /**
@@ -996,7 +1319,7 @@ describe('Structured Output', () => {
 ### 集成测试
 
 - 测试组件间交互
-- 使用 Docker Compose 启动依赖服务（Redis、Chroma）
+- 使用 Docker Compose 启动依赖服务（Redis、PostgreSQL；外部检索服务可用 mock 或独立部署）
 - 测试完整的请求链路
 
 ### E2E 测试
@@ -1018,11 +1341,9 @@ vertical-ai-framework/
 │   │   ├── prompt-manager.ts       # 提示词管理
 │   │   └── stream-handler.ts       # 流式处理器
 │   ├── adapters/                   # 适配器层
-│   │   ├── vector-stores/          # 向量库适配器
-│   │   │   ├── interface.ts        # IVectorStore 接口
-│   │   │   ├── chroma.ts           # Chroma 适配器
-│   │   │   ├── pinecone.ts         # Pinecone 适配器
-│   │   │   └── milvus.ts           # Milvus 适配器
+│   │   ├── retrieval/              # 外部检索适配器
+│   │   │   ├── interface.ts        # 检索适配器接口
+│   │   │   └── ragflow.ts          # RAGFlow HTTP 适配器
 │   │   ├── providers/              # 模型提供商适配器
 │   │   │   ├── openai.ts
 │   │   │   ├── anthropic.ts
@@ -1038,9 +1359,14 @@ vertical-ai-framework/
 │   │   └── logger.ts               # 日志
 │   ├── services/                   # 业务服务
 │   │   ├── document-processor.ts   # 文档处理
-│   │   ├── chunker.ts              # 分块器
-│   │   ├── embedder.ts             # 嵌入器
+│   │   ├── cleaner.ts              # 数据清洗
+│   │   ├── pii-redactor.ts         # PII 脱敏
 │   │   ├── reranker.ts             # 重排序器
+│   │   ├── sources.ts              # 联网搜索与来源入库
+│   │   ├── research-projects.ts     # 研究项目服务（Projects/Notes/Claims/Tasks）
+│   │   ├── exporters/              # 导出器
+│   │   │   ├── markdown.ts          # Markdown/Obsidian 导出
+│   │   │   └── notion.ts            # Notion 导出
 │   │   ├── feedback.ts             # 反馈收集
 │   │   ├── eval.ts                 # 评估框架
 │   │   └── synthetic-data.ts       # 合成数据生成
@@ -1050,20 +1376,23 @@ vertical-ai-framework/
 │   │   │   ├── chat.ts
 │   │   │   ├── rag.ts
 │   │   │   ├── documents.ts
-│   │   │   ├── agents.ts
-│   │   │   └── admin.ts
+│   │   │   └── agents.ts
+│   │   │   ├── sources.ts           # Sources API（search/import）
+│   │   │   ├── projects.ts          # Projects API
+│   │   │   ├── notes.ts             # Notes API
+│   │   │   ├── tasks.ts             # TaskItem API
+│   │   │   └── export.ts            # Export API（markdown/notion）
 │   │   └── schemas/                # Zod Schema
 │   │       ├── chat.ts
 │   │       ├── rag.ts
 │   │       └── common.ts
+│   │       ├── sources.ts           # Sources Schemas
+│   │       ├── projects.ts          # Projects/Notes/Claims Schemas
+│   │       └── export.ts            # Export Schemas
 │   ├── observability/              # 可观测性
 │   │   ├── tracer.ts               # 追踪
 │   │   ├── metrics.ts              # 指标
 │   │   └── logger.ts               # 日志
-│   ├── tenant/                     # 租户管理
-│   │   ├── manager.ts
-│   │   ├── quota.ts
-│   │   └── billing.ts
 │   ├── config/                     # 配置
 │   │   ├── index.ts
 │   │   ├── schema.ts               # 配置 Schema
@@ -1116,16 +1445,10 @@ export const defaultConfig: IFrameworkConfig = {
   
   // RAG 配置
   rag: {
-    vectorStore: {
-      type: process.env.NODE_ENV === 'production' ? 'pinecone' : 'chroma',
-      config: {
-        // 根据类型动态配置
-      },
-    },
-    chunker: {
-      strategy: 'semantic',
-      chunkSize: 512,
-      chunkOverlap: 50,
+    provider: 'ragflow',
+    ragflow: {
+      baseUrl: process.env.RAGFLOW_BASE_URL,
+      apiKey: process.env.RAGFLOW_API_KEY,
     },
     retrieval: {
       topK: 5,
@@ -1496,6 +1819,9 @@ frontend/
 │   │   │   └── [id]/page.tsx       # 对话页
 │   │   └── documents/
 │   │       └── [id]/page.tsx       # 文档页
+│   │   └── research/
+│   │       ├── page.tsx             # 研究工作区首页（项目列表）
+│   │       └── [projectId]/page.tsx # 项目工作区（资料/笔记/导出/任务）
 │   ├── components/                 # 组件
 │   │   ├── chat/
 │   │   │   ├── ChatInterface.tsx
@@ -1508,6 +1834,13 @@ frontend/
 │   │   │   ├── CitationPanel.tsx
 │   │   │   ├── TextSelection.tsx
 │   │   │   └── ActionPopover.tsx
+│   │   ├── research/
+│   │   │   ├── ProjectList.tsx      # 项目列表
+│   │   │   ├── SourceLibrary.tsx    # 来源库/搜索与入库
+│   │   │   ├── NoteEditor.tsx       # 笔记编辑器
+│   │   │   ├── ClaimList.tsx        # 结论列表（带引用）
+│   │   │   ├── TaskBoard.tsx        # 待办看板
+│   │   │   └── ExportPanel.tsx      # 导出面板（Markdown/Notion）
 │   │   ├── common/
 │   │   │   ├── StreamText.tsx
 │   │   │   ├── Markdown.tsx
@@ -1522,14 +1855,22 @@ frontend/
 │   │   ├── useDocumentActions.ts
 │   │   ├── useStreamParser.ts
 │   │   └── useCitations.ts
+│   │   ├── useResearchProjects.ts   # 研究项目相关 hooks
+│   │   ├── useSources.ts            # 来源搜索/入库 hooks
+│   │   ├── useNotes.ts              # 笔记与结论 hooks
+│   │   └── useExport.ts             # 导出 hooks
 │   ├── stores/                     # Zustand Stores
 │   │   ├── conversation.ts
 │   │   ├── document.ts
 │   │   └── ui.ts
+│   │   ├── research.ts              # Research Store（projects/sources/notes/tasks）
 │   ├── services/                   # API 服务
 │   │   ├── api.ts
 │   │   ├── stream.ts
 │   │   └── citation.ts
+│   │   ├── sources.ts               # Sources API client
+│   │   ├── projects.ts              # Projects API client
+│   │   └── export.ts                # Export API client
 │   ├── types/                      # 类型定义
 │   │   └── index.ts
 │   └── utils/                      # 工具函数
@@ -1701,47 +2042,11 @@ const selectionConfig = {
 
 ## 架构精修补充
 
-### 1. 向量库过滤语法统一 DSL
+### 1. 检索过滤参数透传
 
-为避免业务层与具体向量数据库耦合，定义统一的过滤 DSL：
+当前迭代不实现内部向量库，因此不定义统一的向量库过滤 DSL。
 
-```typescript
-// 统一过滤 DSL
-interface IVectorFilter {
-  field: string;
-  operator: 'eq' | 'ne' | 'in' | 'nin' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains';
-  value: unknown;
-}
-
-interface IVectorFilterGroup {
-  logic: 'and' | 'or';
-  filters: (IVectorFilter | IVectorFilterGroup)[];
-}
-
-// Adapter 内部转译示例
-class ChromaVectorStore implements IVectorStore {
-  private translateFilter(filter: IVectorFilter): Record<string, unknown> {
-    const operatorMap = {
-      eq: '$eq',
-      ne: '$ne',
-      in: '$in',
-      gt: '$gt',
-      gte: '$gte',
-      lt: '$lt',
-      lte: '$lte',
-      contains: '$contains',
-    };
-    return { [filter.field]: { [operatorMap[filter.operator]]: filter.value } };
-  }
-}
-
-class PineconeVectorStore implements IVectorStore {
-  private translateFilter(filter: IVectorFilter): Record<string, unknown> {
-    // Pinecone 使用不同的语法
-    return { [filter.field]: { [`$${filter.operator}`]: filter.value } };
-  }
-}
-```
+检索过滤条件以 `Record<string, unknown>` 形式在 `IRetrieveOptions.filter` 中透传给外部检索服务（RAGFlow），由其负责解析与执行。
 
 ### 2. Fastify 流式响应 Header 规范
 
@@ -2037,38 +2342,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Tenant {
-  id        String   @id @default(cuid())
-  name      String
-  plan      String   @default("free")
-  quotas    Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  apiKeys      ApiKey[]
-  documents    Document[]
-  usageRecords UsageRecord[]
-}
-
 model ApiKey {
   id          String    @id @default(cuid())
   tenantId    String
-  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   keyHash     String    @unique
   name        String
   permissions Json
-  quotas      Json?
   lastUsedAt  DateTime?
   expiresAt   DateTime?
   createdAt   DateTime  @default(now())
   
+  @@index([keyHash])
   @@index([tenantId])
 }
 
 model Document {
   id          String   @id @default(cuid())
   tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   source      String
   contentHash String
   metadata    Json
@@ -2076,12 +2366,13 @@ model Document {
   
   chunks Chunk[]
   
-  @@index([tenantId])
   @@index([contentHash])
+  @@index([tenantId])
 }
 
 model Chunk {
   id          String   @id @default(cuid())
+  tenantId    String
   documentId  String
   document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   chunkIndex  Int
@@ -2092,12 +2383,89 @@ model Chunk {
   embedding   Float[]
   
   @@index([documentId])
+  @@index([tenantId])
+}
+
+model Source {
+  id          String   @id @default(cuid())
+  tenantId    String
+  type        String
+  title       String?
+  url         String?
+  summary     String?
+  publishedAt DateTime?
+  contentHash String?
+  documentId  String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model ResearchProject {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  description String?
+  goals       Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model ResearchQuestion {
+  id        String   @id @default(cuid())
+  tenantId  String
+  projectId String
+  question  String
+  status    String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model ResearchNote {
+  id        String   @id @default(cuid())
+  tenantId  String
+  projectId String
+  title     String
+  content   String
+  citations Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Claim {
+  id         String   @id @default(cuid())
+  tenantId   String
+  projectId  String
+  text       String
+  importance String
+  citations  Json?
+  confidence Float?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model TaskItem {
+  id              String   @id @default(cuid())
+  tenantId         String
+  projectId        String
+  title            String
+  status           String
+  type             String
+  relatedSourceId  String?
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId])
 }
 
 model UsageRecord {
   id               String   @id @default(cuid())
-  tenantId         String
-  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId          String
   model            String
   promptTokens     Int
   completionTokens Int
@@ -2105,6 +2473,7 @@ model UsageRecord {
   estimated        Boolean  @default(false)
   createdAt        DateTime @default(now())
   
-  @@index([tenantId, createdAt])
+  @@index([createdAt])
+  @@index([tenantId])
 }
 ```

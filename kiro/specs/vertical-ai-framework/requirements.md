@@ -8,13 +8,18 @@
 
 框架提供从RAG管道、多模型路由、Agent工作流、评估体系、数据处理、安全护栏到LLMOps运维的完整能力，帮助开发者快速构建高质量的垂直AI产品。
 
+## 范围与关键决策（当前迭代）
+
+- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
+- **多租户/配额**: 当前迭代不实现多租户与配额管理能力（需求 21 延后）。
+
 ## 技术栈
 
 - **语言**: TypeScript
 - **运行时**: Node.js
 - **核心SDK**: Vercel AI SDK Core
 - **API框架**: Fastify
-- **向量数据库**: Chroma（开发）/ Pinecone（生产）
+- **外部检索服务**: RAGFlow（通过 HTTP API）
 - **缓存**: Redis
 - **监控**: OpenTelemetry + Prometheus
 - **Schema验证**: Zod
@@ -22,8 +27,8 @@
 ## 术语表
 
 - **RAG (Retrieval-Augmented Generation)**: 检索增强生成，通过外挂知识库为大模型提供上下文信息
-- **Embedding**: 将文本转换为向量表示的过程，用于语义检索
-- **Chunking**: 将长文档切分成小块以便存入向量数据库的过程
+- **Embedding**: 将文本转换为向量表示的过程，用于语义检索（可由外部检索服务或后续内部能力提供）
+- **Chunking**: 将长文档切分成小块以便索引与检索（可由外部检索服务或后续内部能力提供）
 - **Model Router**: 模型路由器，根据请求复杂度自动选择合适的模型
 - **Agent**: 具备规划、工具调用、自我反思能力的AI代理
 - **Guardrails**: 安全护栏，用于过滤不当输入输出和防止Prompt注入
@@ -41,13 +46,14 @@
 
 #### 验收标准
 
-1. WHEN 开发者初始化框架 THEN 框架 SHALL 创建包含文档加载器、分块器、嵌入器和检索器的可配置RAG管道
+1. WHEN 开发者初始化框架 THEN 框架 SHALL 创建包含文档加载器、清洗/脱敏与外部检索适配器的可配置RAG管道（摄入/检索由 RAGFlow 完成）
 2. WHEN 开发者提供文档 THEN 框架 SHALL 支持PDF、Markdown、HTML、Word、Excel和纯文本等多种文件格式
-3. WHEN 框架对文档分块 THEN 框架 SHALL 支持语义分块、段落分块、滑动窗口和父子文档索引等可配置策略
-4. WHEN 框架检索上下文 THEN 框架 SHALL 返回相关文档块及其来源归属以支持溯源
-5. WHEN 开发者配置向量数据库 THEN 框架 SHALL 定义标准的 `IVectorStore` 接口（包含 `addDocuments`、`similaritySearch` 方法），业务层只调用接口不依赖具体库SDK
-6. WHEN 切换向量数据库实现 THEN 框架 SHALL 通过向量库适配器模式（Vector Store Adapter Pattern）支持Pinecone、Milvus、Weaviate、Chroma等主流向量数据库的无缝切换
+3. WHEN 需要分块/索引策略 THEN 框架 SHALL 支持通过 RAGFlow 的配置/模板完成分块与索引（当前迭代不实现内部 Chunker/Embedding）
+4. WHEN 框架检索上下文 THEN 框架 SHALL 通过 RAGFlow 检索返回相关文档块及其来源归属以支持溯源
+5. WHEN 开发者选择外部知识库服务（如 RAGFlow） THEN 框架 SHALL 支持通过检索适配器以 HTTP API 调用外部服务完成文档摄入与检索，并将结果映射为统一结构（chunks + citations）
+6. WHEN 未来需要内部向量库 THEN 框架 MAY 提供标准化的向量库适配器接口与实现（后续/暂不实现）
 7. WHEN 检索结果需要重排序 THEN 框架 SHALL 提供可配置的Reranker组件以提升检索精度
+
 
 ### 需求 2
 
@@ -286,9 +292,9 @@
 
 #### 验收标准
 
-1. WHEN RAG检索返回结果 THEN 框架 SHALL 在响应中包含引用坐标（文档ID、段落索引、字符偏移量）
+1. WHEN RAG检索返回结果 THEN 框架 SHALL 在响应中包含引用坐标（文档ID、段落索引、字符偏移量）或等价定位信息（如chunkId）
 2. WHEN 模型生成包含引用的回答 THEN 框架 SHALL 将引用标记与源文档坐标关联
-3. WHEN 前端请求原文高亮 THEN 框架 SHALL 提供API返回指定坐标范围的原文内容
+3. WHEN 前端请求原文高亮 THEN 框架 SHALL 提供API返回指定引用（坐标范围或chunkId等等价定位方式）的原文内容
 4. WHEN 用户划词选中文本 THEN 框架 SHALL 提供预处理接口支持对选中文本执行特定AI技能（解释、翻译、改写）
 5. WHEN 引用来源不可用 THEN 框架 SHALL 在响应中标记引用状态为"不可验证"
 
@@ -305,7 +311,7 @@
 5. WHEN 生成数据需要质量控制 THEN 合成数据生成器 SHALL 支持人工审核和标注流程
 6. WHEN 导出训练数据 THEN 合成数据生成器 SHALL 支持输出为微调所需的JSONL格式
 
-### 需求 21
+### 需求 21（后续/暂不实现）
 
 **用户故事:** 作为开发者，我希望框架支持多租户和配额管理，以便实现SaaS订阅制和基于用量的商业模式。
 
@@ -342,6 +348,250 @@
 1. WHEN 核心函数被调用前 THEN 系统 SHALL 支持 `wrapLanguageModel` 中间件模式，用于统一添加System Prompt或安全护栏
 2. WHEN 需要模拟测试 THEN 系统 SHALL 支持注入 `MockLanguageModel`，在不消耗Token的情况下进行单元测试
 3. WHEN 中间件链执行 THEN 系统 SHALL 按注册顺序依次执行，支持短路返回
-4. WHEN 中间件需要访问上下文 THEN 系统 SHALL 提供请求级别的上下文对象（包含用户信息、租户信息等）
+4. WHEN 中间件需要访问上下文 THEN 系统 SHALL 提供请求级别的上下文对象（包含用户信息、请求ID等）
 5. WHEN 中间件发生错误 THEN 系统 SHALL 捕获错误并执行配置的错误处理策略
 6. WHEN 需要条件性中间件 THEN 系统 SHALL 支持基于请求特征动态启用/禁用特定中间件
+
+## 研究智能体专属需求（Research Copilot）
+
+> 说明：以下需求用于将本框架落地为“面向研究者与研究流程”的研究协作智能体（可平台化）。研究资料（包含 PDF/网页等）作为输入与证据来源，用于检索、摘录、引用溯源与产出导出。它们在不改变现有核心架构（Provider 接口、Zod 结构化输出、流式协议、RAGFlow 外部检索）的前提下，补齐研究场景的产品化能力。
+
+### 需求 24
+
+**用户故事:** 作为研究者，我希望系统能对 PDF 文档进行结构化解析并支持页码级引用溯源，以便我能快速回到原文核查。
+
+#### 验收标准
+
+1. WHEN 用户上传 PDF 文档 THEN 系统 SHALL 解析并保留页码信息，且对每个可引用片段生成可定位的引用信息（至少包含 documentId、pageNumber、startOffset、endOffset 或等价定位字段）
+2. WHEN PDF 包含目录或章节结构 THEN 系统 SHOULD 提取目录/章节层级并写入元数据（如 chapterTitle、sectionTitle、tocPath）
+3. WHEN 生成回答或笔记 THEN 系统 SHALL 将关键结论与引用信息关联输出，以支持前端点击引用跳转/高亮
+4. WHEN PDF 解析失败或信息不完整 THEN 系统 SHALL 返回可解释的错误信息并允许重试或降级（例如仅保留页码或仅保留 chunkId）
+
+### 需求 25
+
+**用户故事:** 作为研究者，我希望系统支持联网实时搜索并将结果沉淀到个人资料库，以便逐步构建可复用的研究语料。
+
+#### 验收标准
+
+1. WHEN 用户发起联网搜索 THEN 系统 SHALL 支持按关键词/作者/主题进行检索，并返回可追溯的来源列表（标题、URL、摘要、时间等）
+2. WHEN 用户选择某个来源 THEN 系统 SHALL 抓取正文内容并进行清洗/脱敏后入库
+3. WHEN 来源为 PDF 或可下载文件 THEN 系统 SHALL 支持下载并走文档摄入流程（与 RAGFlow 摄入对接）
+4. WHEN 抓取内容存在版权/访问限制 THEN 系统 SHALL 以合规方式处理（例如仅保存元数据与链接，不保存受限正文）
+5. WHEN 同一来源被重复添加 THEN 系统 SHOULD 基于内容哈希或 URL 规范化进行去重，并保留版本信息
+
+### 需求 26
+
+**用户故事:** 作为研究者，我希望系统提供研究项目工作台，以便围绕同一研究主题管理问题、资料、摘录、结论与待办。
+
+#### 验收标准
+
+1. WHEN 创建研究项目 THEN 系统 SHALL 允许配置研究主题、研究问题列表与目标输出格式
+2. WHEN 用户添加资料或产生摘录 THEN 系统 SHALL 将其归档到指定研究项目，并可检索与筛选
+3. WHEN 生成研究笔记/结论 THEN 系统 SHALL 以结构化方式保存（例如 Note、Claim、Evidence、Citation 的关联）
+4. WHEN 用户要求回溯证据 THEN 系统 SHALL 能从任一结论定位到对应引用片段及其来源元数据
+5. WHEN 用户拆解任务 THEN 系统 SHALL 生成并维护待办队列（to-read/to-verify/to-write），并允许手动调整
+
+### 需求 27
+
+**用户故事:** 作为研究者，我希望系统能将研究成果导出到本地 Markdown/Obsidian 和 Notion，以便纳入我的长期知识管理体系。
+
+#### 验收标准
+
+1. WHEN 导出为 Markdown THEN 系统 SHALL 输出 Obsidian 友好的格式（例如 frontmatter、内部链接、引用列表）
+2. WHEN 导出为 Notion THEN 系统 SHALL 通过 Notion API 创建/更新页面，并保留引用信息（链接或摘录块）
+3. WHEN 导出包含引用 THEN 系统 SHALL 在导出内容中保留可点击的引用（链接、页码、摘录）
+4. WHEN 导出失败 THEN 系统 SHALL 返回结构化错误与可重试建议（例如鉴权失效、限流、字段不合法）
+
+### 需求 28
+
+**用户故事:** 作为研究者，我希望系统支持“强引用模式”，以便在需要严谨写作时确保关键结论都有可核查的证据支撑。
+
+#### 验收标准
+
+1. WHEN 启用强引用模式 THEN 系统 SHALL 要求所有“关键结论”字段必须附带至少一个引用（Citation）
+2. WHEN 模型输出缺少引用 THEN 系统 SHALL 触发自我修正重试或回退策略，直到达到配置的最大重试次数
+3. WHEN 仍无法生成合规输出 THEN 系统 SHALL 按配置的回答策略（answerPolicy）处理：
+   - strict：返回结构化错误，并附带未满足引用要求的字段列表
+   - force：返回最佳努力输出，但必须标记未满足引用要求的字段列表与证据不足状态，且不得伪造引用
+4. WHEN 返回响应 THEN 系统 SHALL 在响应中标记引用质量信息（例如引用数量、覆盖率、缺失字段、证据状态）以便前端提示
+5. WHEN answerPolicy = force THEN 系统 SHALL 始终返回可读回答内容（即使证据不足），并在响应元数据中显式给出“证据不足/缺失字段”信息
+6. WHEN answerPolicy = force THEN 系统 SHALL 在不具备有效引用支撑的关键结论上显式标注“无证据/不确定”，且该标注应可被机器校验（例如通过结构化字段或标准化标记）
+7. WHEN answerPolicy = force THEN 系统 SHALL 禁止伪造引用：响应中出现的任何 citation 都必须能映射到真实检索/深读结果（documentId/chunk/page/offset 等可追溯字段一致）
+
+### 需求 29
+
+**用户故事:** 作为平台维护者，我希望系统在第一天就预埋多租户隔离（tenantId），以便未来平台化扩展时避免对存储与查询链路进行灾难级重构。
+
+#### 验收标准
+
+1. WHEN 系统持久化任何业务数据（Documents、Chunks、Sources、Projects、Notes、Claims、Tasks、Conversations、Usage 等） THEN 数据记录 SHALL 包含 `tenantId`
+2. WHEN 系统执行任何读写查询 THEN 查询条件 SHALL 默认包含 `tenantId` 过滤，且不得存在跨租户数据泄漏
+3. WHEN 认证成功 THEN 系统 SHALL 从认证上下文中解析出 `tenantId` 并贯穿到请求级上下文对象
+4. WHEN 租户隔离规则被违反 THEN 系统 SHALL 返回授权错误并记录安全事件
+
+### 需求 30
+
+**用户故事:** 作为平台维护者，我希望系统能验证并约束 RAGFlow 的字段能力与契约，以便引用溯源与页码级定位在不同文档类型下稳定可用。
+
+#### 验收标准
+
+1. WHEN 系统对接 RAGFlow THEN 系统 SHALL 定义并实现字段映射策略，将 RAGFlow 的检索结果映射为统一结构（chunks + citations）
+2. WHEN 需求依赖页码/章节等定位信息 THEN 系统 SHALL 验证 RAGFlow 是否返回所需字段（如 pageNumber、offset、toc 等），并在不满足时触发降级策略
+3. WHEN 发生降级 THEN 系统 SHALL 保证引用仍可追溯（至少保留 sourceUrl + chunkId 或等价定位信息），并向可观测性系统记录能力缺失告警
+4. WHEN RAGFlow API 行为发生变更 THEN 系统 SHALL 通过契约测试及时发现并阻断回归
+
+### 需求 31
+
+**用户故事:** 作为研究者与平台维护者，我希望系统具备长文档处理策略与成本控制能力，以便在处理书籍/长篇论文时仍保持可用性与可控成本。
+
+#### 验收标准
+
+1. WHEN 输入文档超过阈值长度 THEN 系统 SHALL 使用分段处理策略（例如 Map-Reduce：分段总结 -> 汇总）而非直接塞入上下文窗口
+2. WHEN 生成章节/分段摘要 THEN 系统 SHALL 支持结构化输出，产出可复用的摘要与关键信息（可用于后续检索与问答）
+3. WHEN 同一文档/章节重复请求 THEN 系统 SHOULD 优先命中缓存或复用已生成的中间结果，以降低 Token 成本
+4. WHEN 长文档处理发生失败 THEN 系统 SHALL 提供可恢复的错误信息与重试/降级策略（例如只处理目录/只处理指定章节）
+
+### 需求 32
+
+**用户故事:** 作为研究者，我希望系统具备“深度解析（Deep Parsing）”能力，以便对复杂版式 PDF（多栏、表格、公式等）仍能进行可靠检索与引用。
+
+#### 验收标准
+
+1. WHEN 摄入复杂版式 PDF THEN 系统 SHOULD 尽可能还原阅读顺序（例如将多栏排版还原为线性文本）
+2. WHEN 文档包含表格 THEN 系统 SHOULD 保留表格结构信息（而不是打平为乱序文本），以支持后续引用与导出
+3. WHEN 生成检索 chunk THEN 系统 SHALL 为 chunk 记录页码与可视化定位元数据（至少包含 pageNumber 与坐标信息或等价字段）
+4. WHEN 深度解析能力不可用 THEN 系统 SHALL 提供可解释降级（例如仅保留页码/offset/chunkId）并记录告警
+
+### 需求 33
+
+**用户故事:** 作为研究者，我希望引用不仅可定位到页码/偏移，还能定位到页面坐标区域，以便前端点击引用时可直接高亮原文或展示页面截图。
+
+#### 验收标准
+
+1. WHEN 引用来自 PDF THEN 系统 SHOULD 在 citation 中附带页内坐标信息（例如 bounding box 坐标集合），用于高亮/截图定位
+2. WHEN 前端请求展示引用 THEN 系统 SHALL 能基于 citation 元数据定位到对应页面区域并展示原文片段（文本高亮或截图）
+3. WHEN 坐标缺失或不可用 THEN 系统 SHALL 退化为页码/offset 级定位，并明确标注降级原因
+
+### 需求 34
+
+**用户故事:** 作为研究者，我希望系统提供可由 Agent 调用的“混合检索工具”，以便在关键词检索与向量检索间取得更稳定的召回与精度。
+
+#### 验收标准
+
+1. WHEN Agent 调用混合检索工具 THEN 系统 SHALL 支持输入 query 与可选 filters（如年份、docId、projectId 等）
+2. WHEN 执行检索 THEN 系统 SHOULD 支持 keyword + vector 的混合召回，并在可用时执行 rerank
+3. WHEN 返回检索结果 THEN 系统 SHALL 返回结构化列表（content、documentId/source、pageNumber、relevanceScore、citation 定位字段等）
+4. WHEN filters 指定 projectId THEN 系统 SHALL 将检索范围限制在该 Project 绑定的资料集合内，避免跨项目知识污染
+
+### 需求 35
+
+**用户故事:** 作为研究者，我希望 Agent 能对特定文档进行“按页范围深度阅读”，以便在发现高相关论文/章节时能精读并抽取证据。
+
+#### 验收标准
+
+1. WHEN Agent 调用 read_document THEN 系统 SHALL 支持按 documentId + pageStart/pageEnd（或等价字段）读取内容
+2. WHEN 返回深读内容 THEN 系统 SHALL 保留页码与引用定位信息（以便后续 Claim/Evidence 绑定）
+3. WHEN 请求页范围超出文档边界 THEN 系统 SHALL 返回结构化错误并给出可重试建议
+
+### 需求 36
+
+**用户故事:** 作为研究者，我希望系统以流式方式展示 Agent 的中间步骤（思考/工具调用/阅读/生成），以便在 Agentic RAG 耗时较长时仍能获得可解释反馈与可控体验。
+
+#### 验收标准
+
+1. WHEN Agent 执行多步任务 THEN 系统 SHALL 以事件流形式输出每一步的状态（thinking/tool_call/tool_result/reading/generating/complete 或等价事件）
+2. WHEN 工具被调用 THEN 系统 SHALL 输出工具名称与参数摘要（脱敏后）并在工具返回时输出结果摘要
+3. WHEN 用户取消请求 THEN 系统 SHALL 中止后续步骤并返回可恢复状态
+
+### 需求 37
+
+**用户故事:** 作为平台维护者，我希望系统支持本地模型与异步解析能力，以便在数据不出域（本地推理）与大文件解析场景下仍保持稳定可用。
+
+#### 验收标准
+
+1. WHEN 配置本地模型服务 THEN 系统 SHALL 支持通过 HTTP 适配器对接本地推理服务（例如 llama.cpp server）并作为 Provider 接入
+2. WHEN 本地模型不支持所需能力（如工具调用/结构化输出） THEN 系统 SHALL 通过提示词与输出校验实现防御性对齐，并在失败时触发回退策略
+3. WHEN 上传大文件触发耗时解析 THEN 系统 SHALL 使用异步任务队列处理摄入/解析，提供 queued/processing/completed/failed 状态查询
+4. WHEN 异步任务失败 THEN 系统 SHALL 返回结构化错误与可重试建议，并记录可观测性事件
+
+### 需求 38
+
+**用户故事:** 作为研究者，我希望在选定研究课题后，系统能自动完成前期准备工作（问题拆解、资料搜集入库、阅读待办与起步包），以便我能快速进入研究与写作。
+
+#### 验收标准
+
+1. WHEN 用户创建研究项目并提供课题信息（title + 可选约束，如领域/时间范围/语言/偏好来源） THEN 系统 SHALL 创建 ResearchProject 并生成初始 ResearchQuestion 列表（可按主题分组），且所有记录 MUST 绑定 `tenantId`
+2. WHEN 生成初始问题列表 THEN 系统 SHOULD 为每个问题附带用途标签（如 definition/background/methods/dataset/evaluation/controversy 等）或等价结构，以便前端筛选与排序
+3. WHEN 用户触发“课题启动（bootstrap）” THEN 系统 SHALL 执行联网搜索并返回来源候选列表（标题、URL、摘要、时间等），且结果可追溯
+4. WHEN 用户确认导入来源 THEN 系统 SHALL 对所选来源执行抓取/下载与清洗/脱敏，并通过 RAGFlow 完成文档摄入；若内容受限 THEN 系统 SHALL 按合规策略降级（仅保存元数据与链接，不保存受限正文）
+5. WHEN 同一来源被重复导入或重复触发 bootstrap THEN 系统 SHOULD 基于 URL 规范化或内容哈希去重，并保证不会产生重复的 Source/Document（允许保留版本信息）
+6. WHEN 资料入库完成 THEN 系统 SHALL 生成研究待办队列（TaskItem），至少包含 to-read/to-verify/to-write 三类，并允许关联来源（relatedSourceId）与推荐阅读范围（如章节/页码，若可用）
+7. WHEN bootstrap 过程运行 THEN 系统 SHALL 以流式事件（progress events）返回阶段性状态（事件名与字段结构 MUST 遵循下述标准契约），且支持用户取消
+
+   progress events 标准契约（最小 schema）：
+
+   ```typescript
+   // 事件名（eventName）枚举
+   export type BootstrapEventName =
+     | 'planning'
+     | 'searching'
+     | 'importing'
+     | 'ingesting'
+     | 'tasking'
+     | 'packaging'
+     | 'complete'
+     | 'cancelled'
+     | 'error';
+
+   // 事件载荷（payload）的最小结构；实现可按需扩展字段，但不得破坏既有字段语义
+   export interface BootstrapProgressEvent {
+     type: 'bootstrap_progress';
+     eventName: BootstrapEventName;
+     timestamp: number; // Unix ms
+
+     // 关联标识
+     bootstrapId: string;
+     projectId: string;
+
+     // 顺序控制（用于前端渲染与幂等处理）
+     sequence: number; // 单调递增，从 1 开始
+
+     // 进度信息（可选）
+     progress?: number; // 0..1
+     message?: string; // 面向人类的简短描述（可用于 UI）
+
+     // 结构化数据（可选，便于前端/Agent 自动处理）
+     payload?: {
+       // search/import/ingest 相关
+       query?: string;
+       selectedSourceUrls?: string[];
+       importedSourceCount?: number;
+       ingestedDocumentIds?: string[];
+
+       // project/task 相关
+       createdQuestionCount?: number;
+       createdTaskCount?: number;
+
+       // 导出相关
+       exported?: {
+         markdownPath?: string;
+         notionPageId?: string;
+       };
+
+       // 错误相关（仅当 eventName = 'error' 时建议提供）
+       error?: {
+         code: string;
+         message: string;
+         retryable: boolean;
+       };
+     };
+   }
+
+   // 收敛规则（协议约束）：
+   // 1) 事件流 SHOULD 从 planning 开始
+   // 2) 事件流 MUST 以且仅以一个终止事件收敛：complete / cancelled / error
+   // 3) cancelled/error 后不得再出现非终止事件
+   ```
+8. WHEN 用户取消 bootstrap THEN 系统 SHALL 终止后续步骤并返回可恢复状态（例如保存已完成的阶段与中间结果），以便用户后续继续执行
+9. WHEN 生成课题起步包 THEN 系统 SHALL 支持导出为本地 Markdown/Obsidian 友好格式，且 SHOULD 支持导出到 Notion（若配置鉴权）；导出内容至少包含：课题概览、初始问题树、来源清单、待办列表
+10. WHEN bootstrap 过程中发生失败 THEN 系统 SHALL 返回结构化错误与可重试建议，并记录可观测性事件（包含 requestId/tenantId/阶段信息）

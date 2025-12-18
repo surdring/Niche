@@ -1,5 +1,10 @@
 # 实现计划
 
+## 范围与关键决策（当前迭代）
+
+- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
+- **多租户/配额**: 当前迭代不实现配额/计费与管理后台能力（任务 16、/api/admin 等延后），但会预埋 `tenantId` 并在全链路实现租户隔离（接口/数据模型/查询默认按 `tenantId` 过滤）。
+
 ## Phase 1: 项目骨架搭建
 
 - [ ] 1. 初始化项目结构和基础配置
@@ -40,6 +45,10 @@
     - **Property 20: Mock 模型注入**
     - **Validates: Requirements 23.2**
 
+  - [ ] 2.5 实现请求级 tenantId 上下文贯穿
+    - 在请求上下文对象中提供 tenantId，并贯穿到核心编排与日志/追踪属性
+    - _Requirements: 29.3_
+
 - [ ] 3. 实现流式处理器
   - [ ] 3.1 实现 StreamHandler 核心类
     - 实现 toFastifyReply 方法（含正确 Header）
@@ -64,37 +73,36 @@
 
 ## Phase 2: 核心引擎实现
 
-- [ ] 5. 实现向量数据库适配器
-  - [ ] 5.1 定义 IVectorStore 接口和统一过滤 DSL
-    - 定义 IVectorFilter、IVectorFilterGroup 类型
-    - 定义 IDocument、ISearchResult、ICitation 类型
-    - _Requirements: 1.5_
-  - [ ] 5.2 实现 Chroma 适配器
-    - 实现 addDocuments、similaritySearch、deleteDocuments
-    - 实现过滤 DSL 转译
-    - _Requirements: 1.5, 1.6_
-  - [ ] 5.3 实现 Pinecone 适配器
-    - 实现相同接口方法
-    - 实现 Pinecone 特定的过滤语法转译
-    - _Requirements: 1.5, 1.6_
-  - [ ] 5.4 编写向量库适配器属性测试
-    - **Property 1: 向量库适配器接口一致性**
-    - **Validates: Requirements 1.5, 1.6**
+- [ ] 5. 对接外部检索服务（RAGFlow）
+  - [ ] 5.1 定义检索适配器与数据映射
+    - 对齐 `IRAGPipeline.ingest/retrieve` 的输入输出结构
+    - 支持 `knowledgeBaseId/collectionId` 作为外部知识库定位信息
+    - _Requirements: 1.1, 1.4, 34.1, 34.3, 34.4_
+  - [ ] 5.2 实现 RAGFlow HTTP API Client/Adapter
+    - 实现 ingest（文档摄入）调用与错误处理
+    - 实现 retrieve（检索）调用与结果映射（chunks + citations）
+    - _Requirements: 1.1, 1.4, 19.1, 34.1, 34.2, 34.3, 34.4_
+  - [ ] 5.3 编写检索适配器溯源测试
+    - **Property 3: 检索结果溯源完整性**
+    - **Validates: Requirements 1.4, 19.1**
 
-- [ ] 6. 实现文档处理管道
-  - [ ] 6.1 实现文档加载器
+- [ ] 6. 实现文档摄入与预处理（通过 RAGFlow）
+  - [ ] 6.1 实现文档摄入入口
     - 支持 PDF、Markdown、HTML、Word、Excel、纯文本
-    - 统一输出格式
+    - 将文档内容与元数据发送至 RAGFlow 完成摄入
     - _Requirements: 1.2_
-  - [ ] 6.2 实现分块器（Chunker）
-    - 实现语义分块策略
-    - 实现段落分块策略
-    - 实现滑动窗口策略
-    - 记录 startOffset、endOffset
+  - [ ] 6.2 对接 RAGFlow 的分块/索引配置（不实现内部 Chunker）
+    - 分块策略与索引能力由 RAGFlow 侧配置/模板驱动
+    - 框架仅透传必要参数（如 `knowledgeBaseId/collectionId` 与 metadata）
     - _Requirements: 1.3_
-  - [ ] 6.3 编写分块完整性属性测试
-    - **Property 2: 文档分块完整性**
-    - **Validates: Requirements 1.3, 1.4**
+  - [ ] 6.3 补齐 PDF 页码/章节元数据与引用定位信息
+    - 保留页码（pageNumber）与章节层级信息（如 tocPath/chapterTitle/sectionTitle）到 metadata
+    - 摄入时将页码/章节信息透传到 RAGFlow，确保检索返回的 citation 可映射为可定位引用
+    - 补齐页内坐标信息（如 boundingBoxes/x_y_coordinates）时，透传并保持到 citation 元数据
+    - _Requirements: 24.1, 24.2, 24.3, 32.3, 33.1_
+  - [ ] 6.8 验证并对齐 Deep Parsing 能力（RAGFlow/解析侧）
+    - 验证复杂版式还原（多栏/表格）与坐标字段可用性；不可用时走降级策略并记录告警
+    - _Requirements: 30.2, 32.1, 32.2, 32.4, 33.1, 33.3_
   - [ ] 6.4 实现数据清洗管道
     - 移除 HTML 标签、修复编码
     - 规范化空白字符
@@ -119,7 +127,7 @@
   - [ ] 7.2 实现引用坐标追踪
     - 在检索结果中包含完整 ICitation
     - 支持前端高亮定位
-    - _Requirements: 19.1, 19.2_
+    - _Requirements: 19.1, 19.2, 33.1, 33.2, 33.3_
   - [ ] 7.3 编写检索溯源属性测试
     - **Property 3: 检索结果溯源完整性**
     - **Validates: Requirements 1.4, 19.1**
@@ -177,6 +185,11 @@
     - Agent 间消息传递
     - 任务委托机制
     - _Requirements: 3.7_
+
+  - [ ] 10.7 实现 Agent Step Events（Thinking UI 事件流）
+    - 流式输出 thinking/tool_call/tool_result/reading/generating/complete/cancelled 等事件
+    - 支持用户取消请求并中止后续步骤
+    - _Requirements: 36.1, 36.2, 36.3_
 
 - [ ] 11. 实现结构化输出
   - [ ] 11.1 实现 generateObject 封装
@@ -250,7 +263,8 @@
 
 ## Phase 5: 租户与可观测性
 
-- [ ] 16. 实现租户管理
+- [ ] 16. 实现租户管理（后续/暂不实现）
+  - 当前迭代不实现多租户隔离与配额管理能力。
   - [ ] 16.1 配置 Prisma 数据库 Schema
     - 创建 Tenant、ApiKey、Document、Chunk、UsageRecord 模型
     - 配置索引和关系
@@ -312,7 +326,7 @@
     - Agent 任务执行
     - 流式事件推送
     - _Requirements: 3.4, 3.5_
-  - [ ] 19.5 实现 /api/admin 端点
+  - [ ] 19.5 实现 /api/admin 端点（后续/暂不实现）
     - 租户管理
     - 用量统计
     - _Requirements: 21.6_
@@ -327,6 +341,11 @@
   - [ ] 20.3 实现 JWT 认证支持
     - Token 验证
     - _Requirements: 16.4_
+
+  - [ ] 20.4 实现 tenantId 解析与租户隔离校验
+    - 从 API Key/JWT/会话上下文解析 tenantId 并注入请求上下文
+    - 所有数据读写默认按 tenantId 过滤
+    - _Requirements: 29.1, 29.2, 29.3, 29.4_
 
 - [ ] 21. 实现 WebSocket 支持
   - [ ] 21.1 配置 Fastify WebSocket 插件
@@ -538,7 +557,6 @@
 - [ ] 37. 配置 Docker 开发环境
   - [ ] 37.1 编写 docker-compose.yml
     - Redis 服务
-    - Chroma 服务
     - PostgreSQL 服务
   - [ ] 37.2 编写 Dockerfile
     - 多阶段构建
@@ -546,3 +564,184 @@
 
 - [ ] 38. Final Checkpoint - 确保所有测试通过
   - Ensure all tests pass, ask the user if questions arise.
+
+## Phase 10: 研究协作智能体平台化（Research Copilot）
+
+> 本阶段将新增的研究协作智能体需求（24-28, 38）完整落地为可用的平台能力：来源搜索/入库、研究项目工作台、课题启动（前期准备）、导出能力、强引用模式与质量验证。
+
+- [ ] 39. 实现联网搜索与来源入库（Sources）
+  - [ ] 39.1 实现 Web 搜索服务与来源结果标准化
+    - 返回标题、URL、摘要、时间等基础字段
+    - _Requirements: 25.1_
+  - [ ] 39.2 实现来源抓取与合规降级策略
+    - 抓取正文后清洗/脱敏再入库；遇到受限内容仅保存元数据与链接
+    - _Requirements: 25.2, 25.4_
+  - [ ] 39.3 实现来源去重与版本策略
+    - 基于内容哈希或 URL 规范化去重
+    - _Requirements: 25.5_
+  - [ ] 39.4 编写来源去重属性测试
+    - **Property 26: 来源去重确定性**
+    - **Validates: Requirements 25.5**
+
+- [ ] 40. 实现研究项目工作台（Projects/Notes/Claims）
+  - [ ] 40.1 定义研究项目与笔记数据模型
+    - ResearchProject、ResearchQuestion、Note、Claim、Evidence、TaskItem
+    - _Requirements: 26.1, 26.3_
+  - [ ] 40.2 实现研究项目服务层
+    - 项目创建/查询/更新；资料与笔记归档
+    - _Requirements: 26.1, 26.2_
+  - [ ] 40.3 实现证据回溯能力
+    - 从结论（Claim）反向定位引用片段与来源元数据
+    - _Requirements: 26.4_
+
+  - [ ] 40.4 实现课题启动（Research Bootstrap）
+    - 生成初始问题列表（ResearchQuestion）与用途标签/分组
+    - 生成待办队列（TaskItem：to-read/to-verify/to-write）并关联来源
+    - 将 Sources 搜索/导入与 RAGFlow 摄入编排为可重复执行的启动流程
+    - _Requirements: 38.1, 38.2, 38.3, 38.4, 38.6_
+
+  - [ ] 40.5 实现 bootstrap 进度事件流与取消/可恢复
+    - 输出 planning/searching/importing/ingesting/tasking/packaging/complete/cancelled/error 等阶段事件（或等价事件）
+    - 支持用户取消并返回可恢复状态
+    - _Requirements: 38.7, 38.8_
+
+  - [ ] 40.6 编写课题启动属性测试
+    - **Property 38: 课题启动幂等性与不重复入库**
+    - **Validates: Requirements 38.4, 38.5**
+
+- [ ] 41. 实现导出能力（Markdown/Obsidian + Notion）
+  - [ ] 41.1 实现 Markdown/Obsidian 导出器
+    - 支持 frontmatter、引用列表与可点击引用
+    - _Requirements: 27.1, 27.3_
+  - [ ] 41.2 实现 Notion 导出器
+    - 通过 Notion API 创建/更新页面，保留引用信息
+    - _Requirements: 27.2, 27.3_
+  - [ ] 41.3 编写导出幂等性属性测试
+    - **Property 27: 导出幂等性**
+    - **Validates: Requirements 27.1, 27.2**
+
+- [ ] 42. 实现强引用模式（Strict Citation Mode）
+  - [ ] 42.1 实现强引用策略配置
+    - 对“关键结论”字段强制至少 1 个 Citation
+    - 支持回答策略（answerPolicy）：strict/force
+    - _Requirements: 28.1_
+  - [ ] 42.2 实现缺引用自修复与回退策略
+    - 缺引用触发自修复重试/回退模型，达到上限按 answerPolicy 处理：
+      - strict：结构化错误 + 缺失字段列表
+      - force：最佳努力输出 + 机器可校验的证据不足标记（missingFields/evidenceStatus）
+    - _Requirements: 28.2, 28.3_
+  - [ ] 42.3 实现 force 模式的“禁止伪造引用”校验
+    - 任何输出 citations 必须可追溯到真实检索/深读结果（documentId/chunk/page/offset 一致）
+    - _Requirements: 28.7_
+  - [ ] 42.4 实现引用质量标记与证据状态
+    - 返回引用数量/覆盖率/置信度（可选）/missingFields/evidenceStatus 等质量信息
+    - _Requirements: 28.4, 28.5, 28.6_
+  - [ ] 42.5 编写强引用模式属性测试
+    - **Property 28: 强引用模式合规性**
+    - 覆盖 strict/force 两种策略下的行为差异
+    - **Validates: Requirements 28.1, 28.2, 28.3, 28.7**
+
+- [ ] 43. 实现研究平台 API 与前端工作区
+  - [ ] 43.1 实现 Sources API
+    - /api/sources/search, /api/sources/import
+    - _Requirements: 25.1, 25.2, 25.3_
+  - [ ] 43.2 实现 Projects/Notes API
+    - /api/projects, /api/notes, /api/tasks
+    - _Requirements: 26.1, 26.2, 26.5_
+  - [ ] 43.3 实现 Export API
+    - /api/export/markdown, /api/export/notion
+    - _Requirements: 27.1, 27.2, 27.4_
+  - [ ] 43.4 实现前端 Research Workspace
+    - 项目列表、资料库、阅读与引用、笔记编辑、导出面板
+    - _Requirements: 26.1, 26.2, 27.1, 27.2_
+
+- [ ] 44. Checkpoint - Research Copilot 平台验收
+  - 运行全量测试：`pnpm -r test` + `pnpm -r lint`
+  - E2E 验证：上传 PDF -> 入库 -> 检索 -> 生成带引用笔记 -> 导出 Markdown/Notion
+  - 强引用模式验证：缺引用时必须自修复；达到上限后按 answerPolicy 行为收敛（strict 报错；force 给出最佳努力输出并标注证据不足/缺失字段）
+
+## Phase 11: 平台化稳健性与成本控制
+
+> 本阶段针对需求 29-31：补齐多租户隔离验证、RAGFlow 字段契约与能力探测、长文档 Map-Reduce 策略与成本控制。
+
+- [ ] 45. 租户隔离验证（Tenant Isolation）
+  - [ ] 45.1 编写租户隔离集成测试
+    - A 租户写入资源，B 租户不可读/不可改/不可删
+    - **Property 29: 租户隔离不泄漏**
+    - **Validates: Requirements 29.1, 29.2, 29.3, 29.4**
+
+- [ ] 46. RAGFlow 字段能力验证与契约测试
+  - [ ] 46.1 实现 RAGFlow 字段映射与能力探测
+    - 验证是否具备 pageNumber/offset/toc 等字段，缺失则触发降级并记录告警
+    - _Requirements: 30.1, 30.2, 30.3_
+  - [ ] 46.2 编写 RAGFlow 契约测试
+    - 发现 API 行为变更并阻断回归
+    - **Property 30: RAGFlow 字段契约稳定性**
+    - **Validates: Requirements 30.1, 30.2, 30.3, 30.4**
+
+- [ ] 47. 长文档处理策略（Map-Reduce）与成本控制
+  - [ ] 47.1 实现长文档分段总结与汇总编排
+    - 分段摘要（section/chapter）-> 汇总（book/project）
+    - _Requirements: 31.1, 31.2_
+  - [ ] 47.2 实现中间结果缓存与复用
+    - 章节摘要/关键要点支持缓存命中，避免重复 Token 消耗
+    - _Requirements: 31.3_
+  - [ ] 47.3 编写长文档策略属性测试与评估
+    - **Property 31: 长文档 Map-Reduce 产出一致性**
+    - **Validates: Requirements 31.1, 31.2, 31.3, 31.4**
+
+- [ ] 48. Checkpoint - 平台化稳健性验收
+  - 运行全量测试：`pnpm -r test` + `pnpm -r lint`
+  - 验证 tenantId 隔离：跨租户数据不可访问
+  - 验证 RAGFlow 契约：字段缺失时降级且有告警
+  - 验证长文档策略：分段摘要可复用，汇总稳定
+
+## Phase 12: Agentic RAG 增强能力落地
+
+> 本阶段将 Agentic RAG 作为默认范式补齐到产品级能力：混合检索与范围过滤、按页深读、引用坐标可视化、本地模型 Provider 与异步摄入。
+
+- [ ] 49. 实现混合检索工具（Hybrid Search）
+  - [ ] 49.1 定义 search_knowledge_base 工具 Schema 与服务接口
+    - 支持 query + filters（projectId/documentId/year）
+    - _Requirements: 34.1, 34.2_
+  - [ ] 49.2 实现项目范围检索约束
+    - projectId 下检索必须限制在项目绑定资料集合
+    - **Property 34: 混合检索范围约束**
+    - **Validates: Requirements 34.4**
+
+- [ ] 50. 实现深读工具（read_document）
+  - [ ] 50.1 定义 read_document 工具 Schema 与服务接口
+    - documentId + pageStart/pageEnd
+    - _Requirements: 35.1_
+  - [ ] 50.2 实现页范围边界校验与引用保留
+    - **Property 35: 深读工具边界正确性**
+    - **Validates: Requirements 35.1, 35.2, 35.3**
+
+- [ ] 51. 引用坐标可视化（前端）
+  - [ ] 51.1 扩展引用面板支持 boundingBoxes 高亮/截图定位
+    - 坐标不可用时回退到页码/offset
+    - **Property 33: 坐标引用可视化定位一致性**
+    - **Validates: Requirements 33.1, 33.2, 33.3**
+
+- [ ] 52. 本地模型 Provider（llama.cpp server）
+  - [ ] 52.1 实现 llama.cpp server 的 Provider 适配
+    - 通过 HTTP 接入并遵循统一 Provider 接口
+    - _Requirements: 37.1_
+  - [ ] 52.2 增加防御性结构化输出与回退策略
+    - 本地模型不满足工具调用/结构化输出时，触发校验重试与回退
+    - _Requirements: 37.2_
+
+- [ ] 53. 异步摄入/解析队列（Job Queue）
+  - [ ] 53.1 实现摄入任务队列与状态机
+    - queued/processing/completed/failed
+    - _Requirements: 37.3, 37.4_
+  - [ ] 53.2 编写异步摄入状态机属性测试
+    - **Property 37: 异步摄入状态机正确性**
+    - **Validates: Requirements 37.3, 37.4, 29.2**
+
+- [ ] 54. Checkpoint - Agentic RAG 能力验收
+  - 混合检索：项目范围过滤正确
+  - 深读工具：页范围校验正确
+  - Thinking UI：step events 顺序与收敛正确
+  - 引用坐标：可高亮/截图定位，缺失时正确降级
+  - 本地模型：可用且失败时有回退/结构化错误

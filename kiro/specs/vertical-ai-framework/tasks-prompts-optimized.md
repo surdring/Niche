@@ -7,6 +7,11 @@
 
 > 本文件由脚本根据 `tasks.md` + `design.md` 自动优化生成。所有的任务指令已合并为综合性 Prompt，以提供完整的上下文依赖。
 
+## 范围与关键决策（当前迭代）
+
+- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
+- **多租户/配额**: 当前迭代不实现多租户与配额管理能力（Task 16、/api/admin 等延后）。
+
 ## Conventions
 
 1. **Repository Layout (Canonical)**
@@ -66,8 +71,8 @@ Your goal is to execute the umbrella **Task 1: 初始化项目结构和基础配
 *Scope: API Server Setup.*
 - **Files**:
   - Server: `apps/api/src/server.ts` (Fastify init, plugins, error handler).
-  - Routes: `apps/api/src/routes/{chat.ts, rag.ts, documents.ts, agents.ts, admin.ts}`.
-  - Schemas: `apps/api/src/schemas/{common.ts, chat.ts, rag.ts, documents.ts, agents.ts, admin.ts}`.
+  - Routes: `apps/api/src/routes/{chat.ts, rag.ts, documents.ts, agents.ts}`.
+  - Schemas: `apps/api/src/schemas/{common.ts, chat.ts, rag.ts, documents.ts, agents.ts}`.
 - **Requirements**: Configure Fastify + `fastify-type-provider-zod`; implement streaming response headers per `design.md` (must include `X-Vercel-AI-Data-Stream: v1`).
 - **Verification**:
   - Property (proposed if missing in `design.md`): `tests/property/task-1-2.test.ts` (Given a streaming handler, response headers must include `X-Vercel-AI-Data-Stream: v1` and must not set conflicting caching headers).
@@ -208,74 +213,75 @@ Provide a bulleted list of issues or a confirmation of readiness for Phase 2.
 
 ## Phase 2: 核心引擎实现
 
-### Task 5: 实现向量数据库适配器
+### Task 5: 对接外部检索服务（RAGFlow）
 
 ```markdown
 # Context
 You are the Lead Engineer. **Phase 2: 核心引擎实现**.
-Your goal is **Task 5: 实现向量数据库适配器** (Sub-tasks 5.1 - 5.4).
+Your goal is **Task 5: 对接外部检索服务（RAGFlow）** (Sub-tasks 5.1 - 5.3).
 
 # Global Constraints
 - TypeScript (Strict), Zod, Fast-Check.
 
 # References
-- **Design Specs**: Vector Store Adapter.
-- **Correctness Property**: **Property 1** (Vector Store Interface Consistency).
+- **Design Specs**: RAGFlow（外部检索服务）集成 / `IRAGPipeline.ingest` & `IRAGPipeline.retrieve` 数据结构.
+- **Correctness Property**: **Property 3** (Citation Traceability / Retrieval Source Integrity).
 
 # Execution Plan
 
-## Task 5.1: Interface & DSL
+## Task 5.1: 定义检索适配器与数据映射
 - **Files**:
-  - `packages/core/src/adapters/vector-stores/interface.ts`
-  - `packages/core/src/types/core.ts`（若集中定义 `IDocument` / `ISearchResult` / `ICitation`）
-- **Requirements**: Define `IVectorStore` and the unified Filtering DSL (Zod schema).
+  - `packages/core/src/adapters/retrieval/interface.ts`
+  - `packages/core/src/types/core.ts`（`ICitation` / `IRetrieveResult` / `IIngestResult` 等）
+- **Requirements**: 对齐 `design.md` 中 `IRAGPipeline.ingest/retrieve` 的输入输出结构；支持 `knowledgeBaseId/collectionId`。
 
-## Task 5.2 & 5.3: Adapters (Chroma & Pinecone)
-- **Files**: `packages/core/src/adapters/vector-stores/{chroma.ts, pinecone.ts}`
-- **Requirements**: Implement `IVectorStore` for both providers. Map unified DSL to provider-specific filters.
-- **Verification**: `tests/integration/task-5-2.test.ts`, `tests/integration/task-5-3.test.ts`（可用 Docker/mock 作为依赖注入）
+## Task 5.2: 实现 RAGFlow HTTP API Client/Adapter
+- **Files**:
+  - `packages/core/src/adapters/retrieval/ragflow.ts`
+  - `packages/core/src/config/schema.ts`（RAGFlow 配置：`RAGFLOW_BASE_URL` / `RAGFLOW_API_KEY`）
+- **Requirements**:
+  - ingest：文档摄入调用、错误处理、超时/重试策略（按 `design.md` 约定）
+  - retrieve：检索调用、结果映射（chunks + citations）
 
-## Task 5.4: Universal Property Tests
-- **Files**: `tests/property/task-5-4.test.ts`
-- **Verification**: Verify **Property 1**（接口语义一致性：`addDocuments` 后 `similaritySearch` 可返回可追溯匹配）
+## Task 5.3: 编写检索适配器溯源属性测试
+- **Files**: `tests/property/task-5-3.test.ts`
+- **Verification**: Verify **Property 3**（citations 引用链路可追溯、字段完整）。
 
 # Checklist
-- [ ] `IVectorStore` and DSL defined.
-- [ ] Chroma & Pinecone adapters implemented.
-- [ ] Property 1 verified for both adapters.
+- [ ] Retrieval adapter interface defined.
+- [ ] RAGFlow adapter implemented (ingest + retrieve).
+- [ ] Property 3 verified.
 
 Please generate the code.
 ```
 
-### Task 6: 实现文档处理管道
+### Task 6: 实现文档摄入与预处理（通过 RAGFlow）
 
 ```markdown
 # Context
 You are the Lead Engineer. **Phase 2: 核心引擎实现**.
-Your goal is **Task 6: 实现文档处理管道** (Sub-tasks 6.1 - 6.7).
+Your goal is **Task 6: 实现文档摄入与预处理（通过 RAGFlow）** (Sub-tasks 6.1 - 6.7).
 
 # Global Constraints
 - TypeScript (Strict), Zod, Fast-Check.
 
 # References
-- **Design Specs**: Architecture / Document Pipeline.
+- **Design Specs**: Document Ingest（通过 RAGFlow）/ 数据清洗与脱敏.
 - **Correctness Properties**:
-    - **Property 2**: Document Chunking Integrity.
     - **Property 8**: Cleaning Idempotency.
     - **Property 9**: PII Redaction Integrity.
 
 # Execution Plan
 
-## Task 6.1: Document Loader
+## Task 6.1: 文档摄入入口（加载 + 透传给 RAGFlow）
 - **Files**:
   - `packages/core/src/services/document-processor.ts`
   - `packages/core/src/services/loaders/...`（按格式拆分：pdf/markdown/html/text/office）
-- **Verification**: `tests/integration/task-6-1.test.ts`（fixture 输入 => 统一输出结构）
+  - `packages/core/src/adapters/retrieval/ragflow.ts`（复用 Task 5 的 ingest 调用）
+- **Verification**: `tests/integration/task-6-1.test.ts`（fixture 输入 => 统一结构 + 可发起 ingest 请求）
 
-## Task 6.2 & 6.3: Chunking (CRITICAL COMPLEX TASK)
-- **Files**: `packages/core/src/services/chunker.ts`
-- **Constraint**: MUST track `startOffset/endOffset`; `original.slice(start,end) === chunk.text`
-- **Verification**: `tests/property/task-6-3.test.ts`（Verify **Property 2**）
+## Task 6.2: 对接 RAGFlow 的分块/索引配置（不实现内部 Chunker）
+- **Requirements**: 分块策略/索引能力由 RAGFlow 侧配置；框架仅透传必要参数（如 `knowledgeBaseId/collectionId` 与 metadata）。
 
 ## Task 6.4 & 6.5: Cleaning Pipeline
 - **Files**: `packages/core/src/services/cleaner.ts`
@@ -287,7 +293,7 @@ Your goal is **Task 6: 实现文档处理管道** (Sub-tasks 6.1 - 6.7).
 
 # Checklist
 - [ ] Loaders implemented.
-- [ ] Chunkers implemented with strict offset tracking (Prop 2).
+- [ ] Ingest entry wired to RAGFlow (no internal chunker).
 - [ ] Cleaning pipeline is idempotent (Prop 8).
 - [ ] PII redaction works (Prop 9).
 
@@ -381,14 +387,14 @@ Please generate the code.
 Act as a **QA Engineer**. Review Phase 2 (Core Engine).
 
 # Review Objectives
-1.  **Chunking Integrity**: strictly check if offsets in `Task 6` are accurate.
-2.  **RAG Tracing**: Are citations correctly flowing from VectorStore -> Pipeline -> Stream Output?
-3.  **Security**: Are Vector Store queries parametrized?
+1.  **RAGFlow Mapping Correctness**: Are `ingest/retrieve` payloads and result mappings aligned with `design.md`?
+2.  **RAG Tracing**: Are citations correctly flowing from RAGFlow -> Pipeline -> Stream Output?
+3.  **Security**: Are external HTTP calls authenticated and timeouts/retries handled safely?
 
 # Verification
 - Run `pnpm -r lint`
 - Run `pnpm -r test`
-- 若接入 Docker 依赖（Chroma/Redis），跑 `tests/integration` 并确认适配器契约一致
+- 若依赖外部 RAGFlow 服务，跑 `tests/integration` 并确认检索/摄入调用可用（或使用 mock/record-replay）。
 
 # Output
 Issues list or confirmation.
@@ -580,12 +586,14 @@ Issues list or confirmation.
 
 ## Phase 5: 租户与可观测性
 
-### Task 16: 实现租户管理
+### Task 16: 实现租户管理（后续/暂不实现）
 
 ```markdown
 # Context
 You are the Lead Engineer. **Phase 5**.
 Your goal is **Task 16: 实现租户管理** (Sub-tasks 16.1 - 16.5).
+
+IMPORTANT: **当前迭代不实现多租户与配额**。本任务仅作为后续迭代的占位符；请不要在本迭代生成实现代码。
 
 # References
 - **Correctness Property**: **Property 18** (Quota Enforcement).
@@ -612,7 +620,7 @@ Your goal is **Task 16: 实现租户管理** (Sub-tasks 16.1 - 16.5).
 - [ ] Tenant/Quota manager implemented.
 - [ ] Quota enforcement verified (Prop 18).
 
-Please generate the code.
+本迭代跳过，无需生成代码。
 ```
 
 ### Task 17: 实现可观测性系统
@@ -650,13 +658,13 @@ Please generate the code.
 Act as **QA Engineer**. Review Phase 5.
 
 # Review Objectives
-1.  **Data Isolation**: Can Tenant A see Tenant B's data?
-2.  **Quota Race Conditions**: Are concurrent requests handled correctly (Atomic increments)?
+1.  **Observability Correctness**: Are tracing/metrics/logging wired correctly and consistently?
+2.  **Token Tracking**: Is token usage recorded reliably for both streaming and non-streaming?
 
 # Verification
 - Run `pnpm -r lint`
 - Run `pnpm -r test`
-- 并发配额：用集成测试确认原子扣减/并发安全（至少在事务或 Lua 脚本层面）
+- 多租户/配额相关检查在本迭代不适用（Task 16 延后）。
 
 # Output
 Issues list or confirmation.
@@ -697,15 +705,18 @@ Your goal is **Task 19: 实现 API 路由** (Sub-tasks 19.1 - 19.5).
 - **Files**: `apps/api/src/routes/agents.ts`
 - **Verification**: `tests/property/task-19-4.test.ts`（Verify **Property 7**：maxSteps 不得超限）
 
-## Task 19.5: /admin
-- **Files**: `apps/api/src/routes/admin.ts`
-- **Verification**: `tests/integration/task-19-5.test.ts`
+## Task 19.5: /api/admin
+- IMPORTANT: `/api/admin` 属于多租户/配额相关能力，当前迭代不实现（延后）。
+- **Files**: （后续）另行补充
+- **Verification**: （后续）另行补充
 
 # Checklist
 - [ ] `/chat` implements Protocol v1 strictly and `tests/e2e/task-19-1.test.ts` passes (Prop 14).
-- [ ] `/rag`, `/documents`, `/admin` endpoints implemented and corresponding integration tests pass.
+- [ ] `/rag`, `/documents` endpoints implemented and corresponding integration tests pass.
 - [ ] `/agents` enforces maxSteps and `tests/property/task-19-4.test.ts` passes (Prop 7).
 - [ ] Streaming headers compliant (`X-Vercel-AI-Data-Stream: v1`).
+
+NOTE: `/api/admin` 属于多租户/配额相关能力，当前迭代不实现（延后）。
 
 Please generate the code.
 ```
@@ -1091,7 +1102,7 @@ Your goal is **Task 37: 配置 Docker 开发环境**.
 # Execution Plan
 - **Files**: `Dockerfile`, `docker-compose.yml`
 - **Verification**:
-  - `docker-compose up` 能拉起 Redis/DB/Chroma/API
+  - `docker-compose up` 能拉起 Redis/DB/API
   - `tests/e2e/task-37.test.ts`（可选：最小链路 smoke test）
 
 # Checklist
@@ -1119,4 +1130,243 @@ Act as **Lead Architect & Security Officer**. Perform the **Final Audit**.
 
 # Output
 Final Sign-off or Blocking Issues List.
+
+## Addendum: Agentic RAG & Research Copilot Extensions
+
+> 本附录用于对齐 `tasks.md` 新增的 Agentic RAG / Research Copilot 任务（Req 32-37, 36.x, 37.x 等），确保执行提示与最新 `design.md`/`requirements.md` 一致。
+
+### Task 42: 实现强引用模式（Strict Citation Mode）
+
+```markdown
+# Context
+You are the Lead Engineer. Your goal is **Task 42: 强引用模式**.
+
+# References
+- **Requirements**: Requirement 28 acceptance criteria (incl. answerPolicy=strict/force)
+- **Design Specs**: `StrictCitationConfigSchema.answerPolicy`, `ChatResponseSchema.citationQuality`
+- **Correctness Property**: Property 28
+
+# Execution Plan
+- Implement `StrictCitationConfig`:
+  - `enabled`
+  - `answerPolicy: 'strict' | 'force'`
+  - `maxRetries`
+- Enforce field-level citations for "关键结论":
+  - If missing citations: retry/self-repair up to `maxRetries`
+  - If still missing:
+    - `strict`: return structured error with `missingFields`
+    - `force`: return best-effort output, and set machine-checkable metadata:
+      - `citationQuality.missingFields`
+      - `citationQuality.evidenceStatus = 'insufficient'`
+- Prevent fake citations:
+  - Any returned `citations[]` must be traceable to actual retrieval/read results
+  - If a citation cannot be traced, drop it and mark evidence as insufficient
+
+# Verification
+- Unit tests for policy behavior (strict vs force)
+- Property test (Property 28):
+  - For force: must return content + evidenceStatus/missingFields when citations are insufficient
+  - For strict: must error with missingFields
+  - For both: no untraceable citations allowed
+
+# Output
+Code + tests.
 ```
+
+### Task 6.8: 验证并对齐 Deep Parsing 能力（RAGFlow/解析侧）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 2: 核心引擎实现**.
+Your goal is **Task 6.8: Deep Parsing 能力验证与降级策略对齐**.
+
+# References
+- **Design Specs**: `ICitation.boundingBoxes` / Deep Parsing 降级策略.
+- **Requirements**: 30.2, 32.1, 32.2, 32.4, 33.1, 33.3
+- **Correctness Properties**: Property 32, Property 33, Property 30
+
+# Execution Plan
+- 实现/补齐 RAGFlow ingest/retrieve 映射中的字段探测：
+  - 是否返回 `pageNumber`/offset/toc
+  - 是否返回坐标信息（映射为 `ICitation.boundingBoxes`）
+- 当字段缺失：
+  - 触发降级（页码/offset/chunkId）
+  - 记录可观测性告警（capability missing）
+
+# Verification
+- 增加 `tests/integration`：在 mock 响应中覆盖“字段齐全/字段缺失”两种情况
+- 确保缺失时系统仍返回可追溯引用并打出告警
+
+# Output
+Patch list + tests added.
+```
+
+### Task 10.7: 实现 Agent Step Events（Thinking UI 事件流）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 3: Agent 和结构化输出**.
+Your goal is **Task 10.7: Agent Step Events**.
+
+# References
+- **Design Specs**: `IAgentEvent` event types + `AgentStepEventSchema`.
+- **Requirements**: 36.1, 36.2, 36.3
+- **Correctness Property**: Property 36
+
+# Execution Plan
+- 扩展 agent 流式执行：
+  - 在 thinking/tool_call/tool_result/reading/generating 阶段 emit event
+  - 在结束时 emit `complete` / `cancelled` / `error`
+- 支持取消：收到 cancel 信号后终止后续 steps 并收敛事件
+
+# Verification
+- 增加属性测试：随机生成 steps 序列，验证事件流可解析且最终收敛（Property 36）
+
+# Output
+Code changes + tests.
+```
+
+## Phase 12: Agentic RAG 增强能力落地
+
+### Task 49: 实现混合检索工具（Hybrid Search）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 12: Agentic RAG 增强能力落地**.
+Your goal is **Task 49: Hybrid Search Tool**.
+
+# References
+- **Design Specs**: `SearchKnowledgeBaseSchema` / `IRetrieveOptions.filter`.
+- **Requirements**: 34.1, 34.2, 34.3, 34.4
+- **Correctness Property**: Property 34
+
+# Execution Plan
+- 在 tools/service 层实现 `search_knowledge_base`：
+  - query + filters（projectId/documentId/year）
+  - 映射到 RAGFlow 的检索参数（collectionId/filters）
+- projectId 过滤：必须限制检索范围在项目绑定集合内
+
+# Verification
+- `tests/integration`：构造不同 projectId 的集合，验证不会跨项目混入
+- `tests/property`：Property 34
+
+# Output
+Code + tests.
+```
+
+### Task 50: 实现深读工具（read_document）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 12**.
+Your goal is **Task 50: read_document**.
+
+# References
+- **Design Specs**: `ReadDocumentSchema` / citation 保留.
+- **Requirements**: 35.1, 35.2, 35.3
+- **Correctness Property**: Property 35
+
+# Execution Plan
+- 实现 `read_document(documentId, pageStart, pageEnd)`：
+  - 页范围校验
+  - 返回内容 + 页码/引用定位信息
+
+# Verification
+- 边界用例：pageStart/pageEnd 越界必须结构化错误
+- Property 35
+
+# Output
+Code + tests.
+```
+
+### Task 51: 引用坐标可视化（前端）
+
+```markdown
+# Context
+You are the Frontend Lead. **Phase 12**.
+Your goal is **Task 51: Citation Visualization**.
+
+# References
+- **Design Specs**: `ICitation.boundingBoxes` + Citation Panel.
+- **Requirements**: 33.1, 33.2, 33.3
+- **Correctness Property**: Property 33
+
+# Execution Plan
+- 扩展引用面板：
+  - boundingBoxes 存在则按坐标高亮/截图定位
+  - 不存在则回退页码/offset，并标注降级原因
+
+# Verification
+- UI 单测（或 e2e）：点击引用能定位；缺坐标时正确回退
+
+# Output
+Component changes + tests.
+```
+
+### Task 52: 本地模型 Provider（llama.cpp server）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 12**.
+Your goal is **Task 52: llama.cpp Provider**.
+
+# References
+- **Design Specs**: Provider interface + local provider notes.
+- **Requirements**: 37.1, 37.2
+
+# Execution Plan
+- 新增 llama.cpp HTTP Provider：
+  - 请求/响应映射
+  - 超时/重试
+  - 结构化输出失败时的防御性校验与回退
+
+# Verification
+- 集成测试：mock llama.cpp server 返回
+- 失败用例：结构化输出不合规 => 触发校验重试/回退
+
+# Output
+Code + tests.
+```
+
+### Task 53: 异步摄入/解析队列（Job Queue）
+
+```markdown
+# Context
+You are the Lead Engineer. **Phase 12**.
+Your goal is **Task 53: Ingest Job Queue**.
+
+# References
+- **Design Specs**: `IIngestJobQueue` / `IIngestJob`.
+- **Requirements**: 37.3, 37.4, 29.2
+- **Correctness Property**: Property 37
+
+# Execution Plan
+- 引入任务队列（例如 BullMQ）：
+  - enqueue 摄入任务
+  - job 状态查询
+  - 失败时结构化错误 + retryable
+- tenantId 隔离：job 查询必须按 tenantId 校验
+
+# Verification
+- Property 37：状态机只能 queued -> processing -> completed/failed
+
+# Output
+Code + tests.
+```
+
+### Task 54: Checkpoint - Agentic RAG 能力验收
+
+```markdown
+# Context
+Act as **Lead Architect & QA Engineer**. Perform Phase 12 Sign-off.
+
+# Verification
+1. Hybrid Search：projectId 范围过滤正确
+2. read_document：页范围边界与引用保留正确
+3. Thinking UI：step events 顺序正确且收敛
+4. Citation Visualization：有坐标可定位，缺坐标可降级
+5. Local Provider：可用且失败可回退/结构化报错
+6. Job Queue：状态机正确且 tenantId 隔离
+
+# Output
+Final Sign-off or Blocking Issues List.
