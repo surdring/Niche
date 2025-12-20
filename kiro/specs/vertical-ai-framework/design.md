@@ -16,6 +16,7 @@
 
 - **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
 - **多租户/配额**: 当前迭代不实现配额/计费与管理后台能力，但会预埋 `tenantId` 并在全链路实现租户隔离（接口/数据模型/查询默认按 `tenantId` 过滤）。
+- **API 主干**: GraphQL 作为主要业务接口，统一编排 RAGFlow（知识插件）与 PostgreSQL（业务数据与审计）；REST/流式接口作为补充用于上传、事件流与高吞吐场景。
 
 ## 架构
 
@@ -24,7 +25,9 @@
 ```mermaid
 graph TB
     subgraph "API Layer"
-        API[Fastify API Server]
+        API[Fastify Server]
+        GQL[GraphQL Gateway]
+        REST[REST/SSE Endpoints]
         WS[WebSocket Handler]
         Swagger[OpenAPI Docs]
     end
@@ -50,6 +53,7 @@ graph TB
     end
 
     subgraph "Infrastructure"
+        DB[PostgreSQL]
         RAGFlow[RAGFlow（外部检索服务）]
         Cache[Redis缓存]
         Telemetry[OpenTelemetry]
@@ -62,12 +66,17 @@ graph TB
         Ollama[Ollama]
     end
 
-    API --> Auth --> RateLimit --> Guard --> Router
+    API --> GQL
+    API --> REST
+    GQL --> Auth --> RateLimit --> Guard --> Router
+    GQL --> DB
+    REST --> Auth
     WS --> Auth
     Router --> SDK
     Agent --> SDK
     RAG --> RAGFlow
     RAG --> SDK
+    Agent --> DB
     SDK --> Stream
     SDK --> Tools
     SDK --> Providers
@@ -78,11 +87,342 @@ graph TB
 
 | 层级 | 职责 | 关键组件 |
 |------|------|----------|
-| API Layer | HTTP/WS入口，文档生成 | Fastify, fastify-swagger |
+| API Layer | HTTP/WS入口，文档生成 | Fastify, Mercurius (GraphQL), fastify-swagger |
 | Middleware Layer | 横切关注点处理 | 认证、限流、护栏、日志 |
 | Core Engine | 业务编排逻辑 | Router, Agent, RAG, Prompt |
 | AI SDK Layer | 模型交互抽象 | Vercel AI SDK Core |
-| Infrastructure | 基础设施适配 | RAGFlow, Cache, Telemetry |
+| Infrastructure | 基础设施适配 | PostgreSQL, RAGFlow, Cache, Telemetry |
+
+### API 契约（GraphQL 主干）
+
+GraphQL 作为主要业务接口，统一编排：
+
+- 业务数据与状态机（Project/Task/Run/Export 等，存储在 PostgreSQL）
+- 知识检索与引用溯源（Search/Chunk/Citation 等，由 RAGFlow 提供并映射）
+
+为保障高准确性，Resolver 侧需默认注入并强制校验 `tenantId`/`projectId`，并在写操作时记录可复现的审计信息（模板版本、检索参数、检索结果标识、citation 列表与质量信息）。
+
+以下为 GraphQL SDL 草案（最小可行、偏准确性与可复现）：
+
+```graphql
+scalar JSON
+
+enum SourceType {
+  url
+  text
+  file
+}
+
+enum RunEventType {
+  status
+  token
+  tool_call
+  tool_result
+  retrieval
+  citation
+  error
+}
+
+enum AnswerPolicy {
+  STRICT
+  REFUSE_WITHOUT_EVIDENCE
+  BEST_EFFORT
+}
+
+enum EvidenceStatus {
+  verified
+  unverifiable
+  missing
+}
+
+enum RefusalReason {
+  MISSING_EVIDENCE
+  OUT_OF_SCOPE
+  SAFETY
+}
+
+enum RunFailureReason {
+  MISSING_EVIDENCE
+  OUT_OF_SCOPE
+  SCHEMA_INVALID
+  TOOL_ERROR
+  MODEL_ERROR
+  TIMEOUT
+  CANCELLED
+}
+
+type Query {
+  me: Viewer!
+
+  project(id: ID!): Project
+  projects: [Project!]!
+
+  run(id: ID!): Run
+
+  search(input: SearchInput!): SearchResult!
+  evidence(citationId: ID!): Evidence!
+}
+
+type Mutation {
+  createProject(input: CreateProjectInput!): Project!
+  importSource(input: ImportSourceInput!): Source!
+
+  startRun(input: StartRunInput!): Run!
+  cancelRun(runId: ID!): Run!
+
+  exportMarkdown(input: ExportMarkdownInput!): ExportResult!
+}
+
+type Subscription {
+  runEvents(runId: ID!): RunEvent!
+}
+
+type Viewer {
+  tenantId: ID!
+}
+
+type Project {
+  id: ID!
+  title: String!
+  description: String
+
+  sources: [Source!]!
+  runs: [Run!]!
+}
+
+type Source {
+  id: ID!
+  projectId: ID!
+  type: SourceType!
+  title: String
+  url: String
+  contentHash: String
+
+  ragflow: RagflowMapping
+  createdAt: Float!
+}
+
+type RagflowMapping {
+  knowledgeBaseId: String
+  collectionId: String
+  documentId: String
+}
+
+type Run {
+  id: ID!
+  projectId: ID!
+  request: RunRequestSnapshot!
+
+  status: RunStatus!
+  failure: RunFailure
+  output: Answer
+
+  model: ModelConfigSnapshot!
+  retrieval: RetrievalConfigSnapshot!
+  citationPolicy: StrictCitationConfig!
+  citations: [Citation!]!
+  citationQuality: CitationQuality
+
+  createdAt: Float!
+  updatedAt: Float!
+}
+
+type RunRequestSnapshot {
+  projectId: ID!
+  templateId: String
+  templateVersion: String
+  question: String!
+  requestHash: String!
+}
+
+type RunFailure {
+  reason: RunFailureReason!
+  message: String
+  retryable: Boolean!
+}
+
+type ModelConfigSnapshot {
+  provider: String!
+  model: String!
+  seed: Int
+  temperature: Float
+  providerOptions: JSON
+}
+
+type Answer {
+  kind: AnswerKind!
+  text: String
+  claims: [Claim!]!
+  refusal: Refusal
+}
+
+enum AnswerKind {
+  answer
+  refusal
+}
+
+type Claim {
+  id: ID!
+  text: String!
+  citations: [Citation!]!
+}
+
+type Refusal {
+  reason: RefusalReason!
+  message: String!
+}
+
+enum RunStatus {
+  queued
+  running
+  completed
+  cancelled
+  failed
+}
+
+type RunEvent {
+  runId: ID!
+  seq: Int!
+  type: RunEventType!
+  timestamp: Float!
+  payload: JSON
+}
+
+input SearchInput {
+  projectId: ID!
+  query: String!
+  topK: Int = 10
+  minScore: Float
+  rerank: Boolean = false
+}
+
+type SearchResult {
+  query: String!
+  hits: [SearchHit!]!
+  trace: RetrievalTrace!
+}
+
+type RetrievalTrace {
+  requestHash: String!
+  indexVersion: String
+}
+
+type SearchHit {
+  score: Float!
+  content: String!
+  citation: Citation!
+}
+
+type Citation {
+  id: ID!
+  documentId: String!
+  chunkId: String
+  documentHash: String
+  chunkIndex: Int
+  startOffset: Int
+  endOffset: Int
+  pageNumber: Int
+  boundingBoxes: [BoundingBox!]
+  sourceUrl: String
+
+  evidenceStatus: EvidenceStatus!
+
+  projectId: ID!
+  sourceId: ID
+}
+
+type BoundingBox {
+  pageNumber: Int!
+  x: Float!
+  y: Float!
+  width: Float!
+  height: Float!
+}
+
+type Evidence {
+  citationId: ID!
+  status: EvidenceStatus!
+  excerpt: String!
+  meta: JSON
+}
+
+input CreateProjectInput {
+  title: String!
+  description: String
+}
+
+input ImportSourceInput {
+  projectId: ID!
+  url: String
+  title: String
+  content: String
+}
+
+input StartRunInput {
+  projectId: ID!
+  templateId: String
+  question: String!
+  model: ModelConfigInput
+  retrieval: RetrievalConfigInput
+  citationPolicy: StrictCitationConfigInput
+}
+
+input ModelConfigInput {
+  provider: String
+  model: String
+  seed: Int
+  temperature: Float
+  providerOptions: JSON
+}
+
+type RetrievalConfigSnapshot {
+  topK: Int!
+  minScore: Float
+  rerank: Boolean!
+  ragflow: RagflowRetrievalSnapshot
+}
+
+type RagflowRetrievalSnapshot {
+  knowledgeBaseId: String
+  collectionId: String
+  indexVersion: String
+  queryRewrite: Boolean
+}
+
+input RetrievalConfigInput {
+  topK: Int
+  minScore: Float
+  rerank: Boolean
+}
+
+type StrictCitationConfig {
+  enabled: Boolean!
+  answerPolicy: AnswerPolicy!
+  maxRetries: Int!
+}
+
+input StrictCitationConfigInput {
+  enabled: Boolean
+  answerPolicy: AnswerPolicy
+  maxRetries: Int
+}
+
+type CitationQuality {
+  citationCount: Int!
+  coverage: Float
+  missingFields: [String!]!
+  evidenceStatus: EvidenceStatus!
+}
+
+input ExportMarkdownInput {
+  projectId: ID!
+  includeCitations: Boolean = true
+}
+
+type ExportResult {
+  markdownPath: String
+}
+```
 
 ## 组件与接口
 
@@ -127,7 +467,7 @@ interface IRoutingRule {
 
 ### 2. 外部检索数据结构（RAGFlow）
 
-当前迭代通过外部检索服务（RAGFlow）完成文档摄入与检索；框架内部仅负责 HTTP 调用、错误处理与数据结构映射。
+当前迭代通过外部检索服务（RAGFlow）完成文档摄入与检索；系统将其作为“知识插件”，在 API 层通过 GraphQL Resolver 编排，并在需要时将关键检索结果与引用快照写入 PostgreSQL 以便复现与审计。
 
 ```typescript
 interface IDocument {
@@ -171,7 +511,7 @@ interface ICitation {
 }
 ```
 
-### 2.1 研究协作智能体扩展数据结构（Research Copilot）
+### 2.1 场景模板：研究协作（Research Copilot）扩展数据结构
 
 为支持需求 24-28（PDF 页码级引用、联网来源入库、研究项目工作台、导出、强引用模式），在核心数据结构之上补充以下概念模型：
 

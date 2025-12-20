@@ -2,16 +2,23 @@
 
 ## 简介
 
-本框架是一个基于 **Vercel AI SDK Core** 构建的轻量级垂直领域 AI 引擎。它拒绝过度抽象，利用 **TypeScript** 强类型特性和 **Fastify** 的高性能 I/O，实现对大模型交互的精确控制。
+**Niche** 是一个基于 **Vercel AI SDK Core** 构建的智能体代理（Agent Proxy），用于编排与管理多个子代理。它拒绝过度抽象，利用 **TypeScript** 强类型特性和 **Fastify** 的高性能 I/O，实现对大模型交互的精确控制。
 
 核心设计理念：**统一的 Provider 接口 + Zod 严格结构化输出 + 标准化流式传输协议**。
 
-框架提供从RAG管道、多模型路由、Agent工作流、评估体系、数据处理、安全护栏到LLMOps运维的完整能力，帮助开发者快速构建高质量的垂直AI产品。
+Niche 以“代理管理 + 工作流编排”为中心，提供从RAG管道、多模型路由、Agent工作流、评估体系、数据处理、安全护栏到LLMOps运维的能力，让用户以可控、可追溯的方式完成学习、研究与个人效率任务。
+
+Niche 不限定于单一垂直场景（如研究智能体或自学平台），而是通过“场景模板”机制，让用户在开始前选择或提供模板，以快速获得可用的提示词、子代理与工具集、结构化输出与工作流编排。
 
 ## 范围与关键决策（当前迭代）
 
-- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由本框架通过 Vercel AI SDK 调用模型完成。
+- **RAG（检索）**: 集成 RAGFlow 作为外部知识库服务，仅负责“文档摄入/检索/引用溯源”；回答生成仍由系统通过 Vercel AI SDK 调用模型完成。
 - **多租户/配额**: 当前迭代不实现多租户与配额管理能力（需求 21 延后）。
+- **场景模板**: 用户在开始前可选择或提供模板（提示词/工具集/输出 Schema/工作流策略）；模板以结构化形式存储与校验，减少“从零配置”。
+- **API 主干**: GraphQL 作为主要业务接口，统一编排 RAGFlow（知识插件）与 PostgreSQL（业务数据与审计）；REST/流式接口作为补充用于上传、事件流与高吞吐场景。
+- **目标用户**: 当前主要面向个人与家庭（个人效率/学习/研究）。
+- **产品形态**: 必须提供人机交互且体验良好的 UI。
+- **非目标（当前迭代）**: 不做多租户 SaaS；不做向量库/检索内核（交由 RAGFlow）；不做模型训练/微调（只做推理与流程）。
 
 ## 技术栈
 
@@ -19,7 +26,11 @@
 - **运行时**: Node.js
 - **核心SDK**: Vercel AI SDK Core
 - **API框架**: Fastify
+- **GraphQL（主干）**: GraphQL Schema + Fastify GraphQL（如 Mercurius）
 - **外部检索服务**: RAGFlow（通过 HTTP API）
+- **本地推理服务（可选）**: llama.cpp server（如 GPT-OSS-20B 等）
+- **业务数据库（可选）**: PostgreSQL
+- **向量存储（RAGFlow 内部，可选）**: Elasticsearch/Infinity
 - **缓存**: Redis
 - **监控**: OpenTelemetry + Prometheus
 - **Schema验证**: Zod
@@ -31,6 +42,11 @@
 - **Chunking**: 将长文档切分成小块以便索引与检索（可由外部检索服务或后续内部能力提供）
 - **Model Router**: 模型路由器，根据请求复杂度自动选择合适的模型
 - **Agent**: 具备规划、工具调用、自我反思能力的AI代理
+- **Agent Proxy（智能体代理）**: 管理与编排多个子代理的入口代理，负责路由任务、协调工具调用与汇总输出
+- **Sub-agent（子代理）**: 面向特定能力或子任务的专用代理（例如检索、深读、写作、校对），由 Agent Proxy 调度
+- **Scenario Template（场景模板）**: 面向特定场景的可复用配置包，通常包含提示词、工具集、结构化输出Schema与工作流策略
+- **Bootstrap（起步包）**: 基于模板为具体任务/项目生成的初始产物（如问题树、资料清单、待办与导出结构）
+- **GraphQL**: 面向 UI 与业务编排的 API 契约层，通过 Schema 将业务数据与知识检索结果统一建模并提供可组合查询/操作
 - **Guardrails**: 安全护栏，用于过滤不当输入输出和防止Prompt注入
 - **Eval Dataset**: 评估数据集，用于衡量AI系统输出质量的标准测试集
 - **PII**: 个人身份信息，需要在数据处理中脱敏
@@ -42,26 +58,26 @@
 
 ### 需求 1
 
-**用户故事:** 作为开发者，我希望快速搭建RAG管道，以便构建知识增强的AI应用而无需从零开始。
+**用户故事:** 作为用户，我希望快速搭建RAG管道，以便将资料接入知识库并完成知识增强任务而无需从零开始。
 
 #### 验收标准
 
-1. WHEN 开发者初始化框架 THEN 框架 SHALL 创建包含文档加载器、清洗/脱敏与外部检索适配器的可配置RAG管道（摄入/检索由 RAGFlow 完成）
-2. WHEN 开发者提供文档 THEN 框架 SHALL 支持PDF、Markdown、HTML、Word、Excel和纯文本等多种文件格式
-3. WHEN 需要分块/索引策略 THEN 框架 SHALL 支持通过 RAGFlow 的配置/模板完成分块与索引（当前迭代不实现内部 Chunker/Embedding）
-4. WHEN 框架检索上下文 THEN 框架 SHALL 通过 RAGFlow 检索返回相关文档块及其来源归属以支持溯源
-5. WHEN 开发者选择外部知识库服务（如 RAGFlow） THEN 框架 SHALL 支持通过检索适配器以 HTTP API 调用外部服务完成文档摄入与检索，并将结果映射为统一结构（chunks + citations）
-6. WHEN 未来需要内部向量库 THEN 框架 MAY 提供标准化的向量库适配器接口与实现（后续/暂不实现）
-7. WHEN 检索结果需要重排序 THEN 框架 SHALL 提供可配置的Reranker组件以提升检索精度
+1. WHEN 用户初始化 Niche THEN 系统 SHALL 创建包含文档加载器、清洗/脱敏与外部检索适配器的可配置RAG管道（摄入/检索由 RAGFlow 完成）
+2. WHEN 用户提供文档 THEN 系统 SHALL 支持PDF、Markdown、HTML、Word、Excel、ePub和纯文本等多种文件格式
+3. WHEN 需要分块/索引策略 THEN 系统 SHALL 支持通过 RAGFlow 的配置/模板完成分块与索引（当前迭代不实现内部 Chunker/Embedding）
+4. WHEN 系统检索上下文 THEN 系统 SHALL 通过 RAGFlow 检索返回相关文档块及其来源归属以支持溯源
+5. WHEN 用户选择外部知识库服务（如 RAGFlow） THEN 系统 SHALL 支持通过检索适配器以 HTTP API 调用外部服务完成文档摄入与检索，并将结果映射为统一结构（chunks + citations）
+6. WHEN 未来需要内部向量库 THEN 系统 MAY 提供标准化的向量库适配器接口与实现（后续/暂不实现）
+7. WHEN 检索结果需要重排序 THEN 系统 SHALL 提供可配置的Reranker组件以提升检索精度
 
 
 ### 需求 2
 
-**用户故事:** 作为开发者，我希望拥有基于统一Provider接口的多模型路由系统，以便根据查询复杂度优化成本和性能。
+**用户故事:** 作为用户，我希望拥有基于统一Provider接口的多模型路由系统，以便根据任务复杂度优化成本和性能。
 
 #### 验收标准
 
-1. WHEN 开发者切换模型提供商（如从OpenAI切至Anthropic） THEN 代码逻辑无需修改，系统 SHALL 使用SDK的统一 `LanguageModel` 接口进行适配
+1. WHEN 用户切换模型提供商（如从OpenAI切至Anthropic） THEN 代码逻辑无需修改，系统 SHALL 使用SDK的统一 `LanguageModel` 接口进行适配
 2. WHEN 收到查询请求 THEN 模型路由器 SHALL 使用可配置规则或分类器模型评估查询复杂度
 3. WHEN 检测到简单查询 THEN 模型路由器 SHALL 路由到经济型模型（如GPT-4o-mini、Claude Haiku）
 4. WHEN 检测到复杂查询 THEN 模型路由器 SHALL 路由到高能力模型（如GPT-4o、Claude Sonnet）
@@ -72,26 +88,26 @@
 
 ### 需求 3
 
-**用户故事:** 作为开发者，我希望拥有基于SDK Tool Calling与Core Message Protocol的Agent工作流引擎，以便构建具备规划、工具调用和自我反思能力的AI代理。
+**用户故事:** 作为用户，我希望 Niche 能提供可编排的多代理工作流引擎，以便完成具备规划、工具调用和自我反思的任务。
 
 #### 验收标准
 
-1. WHEN 定义工具（Tools） THEN 开发者 SHALL 使用 **Zod Schema** 定义工具参数，并直接注册到SDK的 `tools` 配置中
+1. WHEN 定义工具（Tools） THEN 模板作者 SHALL 使用 **Zod Schema** 定义工具参数，并直接注册到SDK的 `tools` 配置中
 2. WHEN 模型决定调用工具 THEN 系统 SHALL 利用SDK的自动参数解析能力，验证参数符合Zod定义，若失败则自动反馈错误给模型进行自我修正
 3. WHEN 执行多步推理（Multi-step） THEN 系统 SHALL 使用 `maxSteps` 参数控制最大迭代次数，防止无限循环
 4. WHEN 管理对话历史 THEN 系统 SHALL 严格遵守SDK的 `CoreMessage` 类型标准（User/Assistant/System/Tool），确保上下文序列化的高效性
 5. WHEN Agent执行多步骤任务 THEN Agent引擎 SHALL 维护执行状态和上下文记忆
 6. WHEN Agent遇到错误 THEN Agent引擎 SHALL 支持重试和回退策略
-7. WHEN 开发者需要多Agent协作 THEN 框架 SHALL 支持Agent之间的消息传递和任务委托
+7. WHEN 需要多Agent协作 THEN 系统 SHALL 支持Agent之间的消息传递和任务委托
 
 ### 需求 4
 
-**用户故事:** 作为开发者，我希望拥有完整的评估框架，以便系统化地衡量和追踪AI系统的输出质量。
+**用户故事:** 作为用户，我希望拥有完整的评估框架，以便系统化地衡量和追踪 Niche 的输出质量。
 
 #### 验收标准
 
-1. WHEN 开发者创建评估数据集 THEN 评估框架 SHALL 支持包含输入、上下文、期望输出和标签的结构化测试用例
-2. WHEN 开发者运行评估 THEN 评估框架 SHALL 测量准确性、完整性、格式合规性和安全性维度
+1. WHEN 用户创建评估数据集 THEN 评估框架 SHALL 支持包含输入、上下文、期望输出和标签的结构化测试用例
+2. WHEN 用户运行评估 THEN 评估框架 SHALL 测量准确性、完整性、格式合规性和安全性维度
 3. WHEN 评估完成 THEN 评估框架 SHALL 生成与基线指标对比的报告
 4. WHEN 开发者修改提示词 THEN 评估框架 SHALL 支持修改前后对比以检测回归
 5. WHEN 需要自动评估 THEN 评估框架 SHALL 支持LLM-as-a-Judge模式用强模型评估弱模型输出
@@ -100,7 +116,7 @@
 
 ### 需求 5
 
-**用户故事:** 作为开发者，我希望拥有完整的数据处理管道，以便清洗、转换和准备领域特定数据。
+**用户故事:** 作为用户，我希望拥有完整的数据处理管道，以便清洗、转换和准备可用于检索/引用的资料。
 
 #### 验收标准
 
@@ -114,7 +130,7 @@
 
 ### 需求 6
 
-**用户故事:** 作为开发者，我希望拥有内置的安全护栏，以便保护应用免受提示注入和不当输出的影响。
+**用户故事:** 作为用户，我希望拥有内置的安全护栏，以便保护我与家人的使用过程免受提示注入和不当输出的影响。
 
 #### 验收标准
 
@@ -128,7 +144,7 @@
 
 ### 需求 7
 
-**用户故事:** 作为开发者，我希望拥有响应缓存能力，以便降低重复查询的成本和延迟。
+**用户故事:** 作为用户，我希望拥有响应缓存能力，以便降低重复任务的成本和延迟。
 
 #### 验收标准
 
@@ -142,7 +158,7 @@
 
 ### 需求 8
 
-**用户故事:** 作为开发者，我希望拥有基于SDK Callbacks的无侵入式可观测性和监控工具，以便追踪系统健康、调试问题和优化性能。
+**用户故事:** 作为用户，我希望系统提供可观测性与监控能力，以便追踪系统健康、调试问题和优化性能。
 
 #### 验收标准
 
@@ -158,21 +174,21 @@
 
 ### 需求 9
 
-**用户故事:** 作为开发者，我希望拥有基于AI Stream Protocol的标准化流式响应支持，以便通过渐进式输出提供更好的用户体验。
+**用户故事:** 作为用户，我希望拥有标准化流式响应支持，以便通过渐进式输出获得更好的体验。
 
 #### 验收标准
 
 1. WHEN 建立流式连接 THEN 系统 SHALL 输出符合 **Vercel AI Data Stream Protocol** 标准的格式（包含文本块、工具调用块、元数据块）
 2. WHEN 集成Fastify THEN 系统 SHALL 利用Fastify的原生Stream支持，将SDK的 `toDataStreamResponse()` 直接pipe到HTTP响应中，零内存拷贝
-3. WHEN 流式传输响应 THEN 框架 SHALL 追踪首Token延迟(TTFT)作为关键指标
-4. WHEN 流式传输中遇到错误 THEN 框架 SHALL 发送特定格式的错误块（Error Chunk，如 `e:{"error": "..."}`），以便前端SDK捕获并切换UI状态
-5. WHEN 客户端在流式传输中断开 THEN 框架 SHALL 取消底层模型请求以节省成本
+3. WHEN 流式传输响应 THEN 系统 SHALL 追踪首Token延迟(TTFT)作为关键指标
+4. WHEN 流式传输中遇到错误 THEN 系统 SHALL 发送特定格式的错误块（Error Chunk，如 `e:{"error": "..."}`），以便前端SDK捕获并切换UI状态
+5. WHEN 客户端在流式传输中断开 THEN 系统 SHALL 取消底层模型请求以节省成本
 6. WHEN 需要前端渲染 THEN 流式响应 SHALL 包含结构化标记，以便前端能区分"正在思考"、"工具执行中"和"最终回答"
-7. WHEN 流式输出完成 THEN 框架 SHALL 提供完整响应的回调钩子
+7. WHEN 流式输出完成 THEN 系统 SHALL 提供完整响应的回调钩子
 
 ### 需求 10
 
-**用户故事:** 作为开发者，我希望拥有反馈收集机制，以便收集用户信号来持续改进AI系统。
+**用户故事:** 作为用户，我希望系统支持反馈收集机制，以便我能标注好/坏结果并持续改进模板与工作流。
 
 #### 验收标准
 
@@ -185,11 +201,11 @@
 
 ### 需求 11
 
-**用户故事:** 作为开发者，我希望拥有提示词管理系统，以便版本化、测试和优化提示词模板。
+**用户故事:** 作为用户，我希望拥有提示词管理系统，以便版本化、测试和优化提示词模板。
 
 #### 验收标准
 
-1. WHEN 开发者创建提示词 THEN 提示词管理器 SHALL 支持模板变量和条件逻辑
+1. WHEN 用户创建提示词 THEN 提示词管理器 SHALL 支持模板变量和条件逻辑
 2. WHEN 提示词被修改 THEN 提示词管理器 SHALL 自动版本化并保留历史记录
 3. WHEN 需要A/B测试 THEN 提示词管理器 SHALL 支持多版本提示词的流量分配
 4. WHEN 提示词包含Few-shot示例 THEN 提示词管理器 SHALL 支持动态示例选择
@@ -198,19 +214,19 @@
 
 ### 需求 12
 
-**用户故事:** 作为开发者，我希望拥有多模态支持，以便处理图片、音频等非文本数据。
+**用户故事:** 作为用户，我希望拥有多模态支持，以便处理图片、音频等非文本资料。
 
 #### 验收标准
 
-1. WHEN 输入包含图片 THEN 框架 SHALL 支持视觉模型处理图片内容
-2. WHEN 输入包含音频 THEN 框架 SHALL 支持语音转文字处理
-3. WHEN 需要图片生成 THEN 框架 SHALL 集成图像生成模型API
-4. WHEN 处理多模态文档 THEN 框架 SHALL 提取并关联文本和图片内容
-5. WHEN 配置多模态模型 THEN 框架 SHALL 支持GPT-4V、Claude Vision等视觉模型
+1. WHEN 输入包含图片 THEN 系统 SHALL 支持视觉模型处理图片内容
+2. WHEN 输入包含音频 THEN 系统 SHALL 支持语音转文字处理
+3. WHEN 需要图片生成 THEN 系统 SHALL 集成图像生成模型API
+4. WHEN 处理多模态文档 THEN 系统 SHALL 提取并关联文本和图片内容
+5. WHEN 配置多模态模型 THEN 系统 SHALL 支持GPT-4V、Claude Vision等视觉模型
 
 ### 需求 13
 
-**用户故事:** 作为开发者，我希望拥有会话管理能力，以便维护多轮对话的上下文和状态。
+**用户故事:** 作为用户，我希望拥有会话管理能力，以便维护多轮对话的上下文和状态。
 
 #### 验收标准
 
@@ -223,46 +239,48 @@
 
 ### 需求 14
 
-**用户故事:** 作为开发者，我希望拥有灾备和降级策略，以便在故障时保持服务可用性。
+**用户故事:** 作为用户，我希望系统具备降级策略，以便在故障时仍保持可用性。
 
 #### 验收标准
 
-1. WHEN 主模型提供商故障 THEN 框架 SHALL 自动切换到备用提供商
-2. WHEN 模型响应超时 THEN 框架 SHALL 返回友好的降级消息而非错误
-3. WHEN 检测到服务过载 THEN 框架 SHALL 启用限流保护
-4. WHEN 配置限流规则 THEN 框架 SHALL 支持按用户、IP、API Key维度限流
-5. WHEN 服务恢复正常 THEN 框架 SHALL 自动切回主服务并记录事件
-6. WHEN 需要熔断保护 THEN 框架 SHALL 在连续失败后暂停对故障服务的调用
+1. WHEN 主模型提供商故障 THEN 系统 SHALL 自动切换到备用提供商
+2. WHEN 模型响应超时 THEN 系统 SHALL 返回友好的降级消息而非错误
+3. WHEN 检测到服务过载 THEN 系统 SHALL 启用限流保护
+4. WHEN 配置限流规则 THEN 系统 SHALL 支持按用户、IP、API Key维度限流
+5. WHEN 服务恢复正常 THEN 系统 SHALL 自动切回主服务并记录事件
+6. WHEN 需要熔断保护 THEN 系统 SHALL 在连续失败后暂停对故障服务的调用
 
 ### 需求 15
 
-**用户故事:** 作为开发者，我希望框架提供插件化架构，以便扩展自定义功能而不修改核心代码。
+**用户故事:** 作为用户，我希望系统提供插件化架构，以便扩展自定义功能而不修改核心代码。
 
 #### 验收标准
 
-1. WHEN 开发者创建插件 THEN 框架 SHALL 提供标准化的插件接口和生命周期钩子
-2. WHEN 插件被注册 THEN 框架 SHALL 在适当的生命周期阶段调用插件
-3. WHEN 插件需要配置 THEN 框架 SHALL 支持插件级别的配置管理
-4. WHEN 插件发生错误 THEN 框架 SHALL 隔离错误不影响核心功能
-5. WHEN 需要禁用插件 THEN 框架 SHALL 支持运行时启用/禁用插件
-6. WHEN 开发者分享插件 THEN 框架 SHALL 支持插件的打包和分发
+1. WHEN 用户创建插件 THEN 系统 SHALL 提供标准化的插件接口和生命周期钩子
+2. WHEN 插件被注册 THEN 系统 SHALL 在适当的生命周期阶段调用插件
+3. WHEN 插件需要配置 THEN 系统 SHALL 支持插件级别的配置管理
+4. WHEN 插件发生错误 THEN 系统 SHALL 隔离错误不影响核心功能
+5. WHEN 需要禁用插件 THEN 系统 SHALL 支持运行时启用/禁用插件
+6. WHEN 用户分享插件 THEN 系统 SHALL 支持插件的打包和分发
 
 ### 需求 16
 
-**用户故事:** 作为开发者，我希望框架提供API服务层，以便快速暴露AI能力为RESTful或GraphQL接口。
+**用户故事:** 作为用户，我希望系统提供API服务层，以便在需要时将能力暴露为RESTful或GraphQL接口。
 
 #### 验收标准
 
-1. WHEN 开发者配置API THEN 框架 SHALL 自动生成RESTful端点
-2. WHEN API被调用 THEN 框架 SHALL 执行认证、限流和日志记录
-3. WHEN 需要API文档 THEN 框架 SHALL 使用 `fastify-type-provider-zod` 配合 `fastify-swagger` 自动从Zod Schema生成OpenAPI文档，实现"代码即文档"
-4. WHEN 配置认证方式 THEN 框架 SHALL 支持API Key、JWT和OAuth2.0
-5. WHEN 需要WebSocket THEN 框架 SHALL 支持实时双向通信
-6. WHEN API版本迭代 THEN 框架 SHALL 支持多版本API共存
+1. WHEN 用户访问系统 API THEN 系统 SHALL 提供 GraphQL Endpoint 作为主要业务接口，用于任务/项目/资料/证据链的查询与操作
+2. WHEN 系统暴露 REST 能力 THEN 系统 SHALL 提供用于流式响应与大文件上传的 REST 端点，并与 GraphQL 保持一致的认证、限流与上下文语义（tenantId/projectId）
+3. WHEN API 被调用 THEN 系统 SHALL 执行认证、限流和日志记录
+4. WHEN 需要 API 文档 THEN 系统 SHALL 为 REST 端点使用 `fastify-type-provider-zod` 配合 `fastify-swagger` 自动从 Zod Schema 生成 OpenAPI 文档，并为 GraphQL 提供可探索的 Schema（SDL/Introspection）与类型文档
+5. WHEN GraphQL Resolver 编排 RAGFlow 与数据库 THEN 系统 SHALL 默认注入并强制校验 `tenantId`/`projectId` 作用域（对齐需求 41），且对关键结论输出应用强引用策略（对齐需求 28）
+6. WHEN 发生写操作（导入/生成/导出等） THEN 系统 SHALL 在 PostgreSQL 中记录可复现的审计信息（模板版本、检索参数、检索结果标识、citation 列表与质量信息）
+7. WHEN 需要实时进度与事件 THEN 系统 SHOULD 支持 GraphQL Subscriptions 或等价的事件通道；若采用 SSE/HTTP Stream THEN GraphQL 响应 MUST 返回可订阅的 runId/streamId
+8. WHEN API 版本迭代 THEN 系统 SHALL 支持多版本 API 共存
 
 ### 需求 17
 
-**用户故事:** 作为开发者，我希望框架提供配置管理系统，以便集中管理和动态更新配置。
+**用户故事:** 作为用户，我希望系统提供配置管理系统，以便集中管理和动态更新配置。
 
 #### 验收标准
 
@@ -275,36 +293,36 @@
 
 ### 需求 18
 
-**用户故事:** 作为开发者，我希望框架提供完整的CLI工具，以便通过命令行管理和调试框架。
+**用户故事:** 作为用户，我希望系统提供完整的CLI工具，以便通过命令行管理和调试。
 
 #### 验收标准
 
-1. WHEN 开发者初始化项目 THEN CLI SHALL 提供脚手架命令生成项目结构
-2. WHEN 开发者运行评估 THEN CLI SHALL 提供命令执行评估并输出报告
-3. WHEN 开发者调试提示词 THEN CLI SHALL 提供交互式提示词测试环境
-4. WHEN 开发者管理数据 THEN CLI SHALL 提供数据导入、导出和清理命令
-5. WHEN 开发者部署服务 THEN CLI SHALL 提供健康检查和状态查询命令
+1. WHEN 用户初始化项目 THEN CLI SHALL 提供脚手架命令生成项目结构
+2. WHEN 用户运行评估 THEN CLI SHALL 提供命令执行评估并输出报告
+3. WHEN 用户调试提示词 THEN CLI SHALL 提供交互式提示词测试环境
+4. WHEN 用户管理数据 THEN CLI SHALL 提供数据导入、导出和清理命令
+5. WHEN 用户部署服务 THEN CLI SHALL 提供健康检查和状态查询命令
 6. WHEN CLI执行命令 THEN CLI SHALL 提供详细的进度和错误信息
 
 ### 需求 19
 
-**用户故事:** 作为开发者，我希望API响应包含精确的引用溯源信息，以便前端实现"点击引用高亮原文"的交互体验。
+**用户故事:** 作为用户，我希望系统响应包含精确的引用溯源信息，以便实现"点击引用高亮原文"的交互体验。
 
 #### 验收标准
 
-1. WHEN RAG检索返回结果 THEN 框架 SHALL 在响应中包含引用坐标（文档ID、段落索引、字符偏移量）或等价定位信息（如chunkId）
-2. WHEN 模型生成包含引用的回答 THEN 框架 SHALL 将引用标记与源文档坐标关联
-3. WHEN 前端请求原文高亮 THEN 框架 SHALL 提供API返回指定引用（坐标范围或chunkId等等价定位方式）的原文内容
-4. WHEN 用户划词选中文本 THEN 框架 SHALL 提供预处理接口支持对选中文本执行特定AI技能（解释、翻译、改写）
-5. WHEN 引用来源不可用 THEN 框架 SHALL 在响应中标记引用状态为"不可验证"
+1. WHEN RAG检索返回结果 THEN 系统 SHALL 在响应中包含引用坐标（文档ID、段落索引、字符偏移量）或等价定位信息（如chunkId）
+2. WHEN 模型生成包含引用的回答 THEN 系统 SHALL 将引用标记与源文档坐标关联
+3. WHEN 前端请求原文高亮 THEN 系统 SHALL 提供API返回指定引用（坐标范围或chunkId等等价定位方式）的原文内容
+4. WHEN 用户划词选中文本 THEN 系统 SHALL 提供预处理接口支持对选中文本执行特定AI技能（解释、翻译、改写）
+5. WHEN 引用来源不可用 THEN 系统 SHALL 在响应中标记引用状态为"不可验证"
 
 ### 需求 20
 
-**用户故事:** 作为开发者，我希望框架能自动生成合成数据，以便在冷启动阶段快速构建评估集和训练数据。
+**用户故事:** 作为用户，我希望系统能自动生成合成数据，以便在冷启动阶段快速构建评估集和训练数据。
 
 #### 验收标准
 
-1. WHEN 开发者提供原始文档 THEN 合成数据生成器 SHALL 使用强模型自动生成问答对（QA Pairs）
+1. WHEN 用户提供原始文档 THEN 合成数据生成器 SHALL 使用强模型自动生成问答对（QA Pairs）
 2. WHEN 生成问答对 THEN 合成数据生成器 SHALL 支持配置问题类型（事实型、推理型、对比型）
 3. WHEN 生成完成 THEN 合成数据生成器 SHALL 输出符合评估框架格式的数据集
 4. WHEN 需要数据增强 THEN 合成数据生成器 SHALL 支持对现有问题生成变体（改写、同义替换）
@@ -313,7 +331,7 @@
 
 ### 需求 21（后续/暂不实现）
 
-**用户故事:** 作为开发者，我希望框架支持多租户和配额管理，以便实现SaaS订阅制和基于用量的商业模式。
+**用户故事:** 作为平台维护者，我希望系统支持多租户和配额管理，以便未来扩展为SaaS订阅制和基于用量的商业模式。
 
 #### 验收标准
 
@@ -327,21 +345,21 @@
 
 ### 需求 22
 
-**用户故事:** 作为开发者，我希望框架基于Zod强制模型输出符合预定义的结构化格式，以便输出可靠地进入后续工作流。
+**用户故事:** 作为用户，我希望系统基于Zod强制模型输出符合预定义的结构化格式，以便输出可靠地进入后续工作流。
 
 #### 验收标准
 
 1. WHEN 场景需要JSON输出（如数据提取、表单填充） THEN 系统 SHALL 使用SDK的 `streamObject` 或 `generateObject` 方法
-2. WHEN 定义输出结构 THEN 开发者 SHALL 必须提供 **Zod Schema**
+2. WHEN 定义输出结构 THEN 模板作者 SHALL 必须提供 **Zod Schema**
 3. WHEN 模型处于流式生成过程中 THEN 系统 SHALL 支持 **Partial JSON Parsing**（增量解析），即在JSON未闭合时也能向前端推送已解析的字段
 4. WHEN 模型生成的数据类型不匹配（如String给了Int） THEN 系统 SHALL 抛出类型验证错误，不予返回脏数据
-5. WHEN 输出格式不符合Schema THEN 框架 SHALL 自动触发修复重试（Self-correction）
-6. WHEN 修复重试失败 THEN 框架 SHALL 返回结构化错误信息说明违规字段
-7. WHEN 配置重试策略 THEN 框架 SHALL 支持设置最大重试次数和回退模型
+5. WHEN 输出格式不符合Schema THEN 系统 SHALL 自动触发修复重试（Self-correction）
+6. WHEN 修复重试失败 THEN 系统 SHALL 返回结构化错误信息说明违规字段
+7. WHEN 配置重试策略 THEN 系统 SHALL 支持设置最大重试次数和回退模型
 
 ### 需求 23
 
-**用户故事:** 作为开发者，我希望在不修改核心编排代码的情况下，统一注入Prompt前缀或修改模型参数。
+**用户故事:** 作为用户，我希望在不修改核心编排代码的情况下，统一注入Prompt前缀或修改模型参数。
 
 #### 验收标准
 
@@ -352,9 +370,9 @@
 5. WHEN 中间件发生错误 THEN 系统 SHALL 捕获错误并执行配置的错误处理策略
 6. WHEN 需要条件性中间件 THEN 系统 SHALL 支持基于请求特征动态启用/禁用特定中间件
 
-## 研究智能体专属需求（Research Copilot）
+## 场景模板：研究协作（Research Copilot）
 
-> 说明：以下需求用于将本框架落地为“面向研究者与研究流程”的研究协作智能体（可平台化）。研究资料（包含 PDF/网页等）作为输入与证据来源，用于检索、摘录、引用溯源与产出导出。它们在不改变现有核心架构（Provider 接口、Zod 结构化输出、流式协议、RAGFlow 外部检索）的前提下，补齐研究场景的产品化能力。
+> 说明：以下需求描述 Niche 在“研究协作（Research Copilot）”这一场景模板下的能力集合。研究资料（包含 PDF/网页等）作为输入与证据来源，用于检索、摘录、引用溯源与产出导出。它们在不改变现有核心架构（Provider 接口、Zod 结构化输出、流式协议、RAGFlow 外部检索）的前提下，补齐研究场景的产品化能力。
 
 ### 需求 24
 
@@ -514,6 +532,9 @@
 3. WHEN 上传大文件触发耗时解析 THEN 系统 SHALL 使用异步任务队列处理摄入/解析，提供 queued/processing/completed/failed 状态查询
 4. WHEN 异步任务失败 THEN 系统 SHALL 返回结构化错误与可重试建议，并记录可观测性事件
 
+5. WHEN 使用 llama.cpp server 对接本地模型 THEN 系统 SHOULD 支持配置并记录以下运行参数（用于复现与性能调优）：model 文件标识、量化等级、上下文窗口大小、并发/批处理策略、GPU offload 参数等
+6. WHEN 用户为本地模型提供推荐配置 THEN 系统 SHOULD 支持在配置层表达等价于以下建议项（不限制实现方式）：32k 上下文窗口、适配的量化配置、以及尽可能的 GPU offload
+
 ### 需求 38
 
 **用户故事:** 作为研究者，我希望在选定研究课题后，系统能自动完成前期准备工作（问题拆解、资料搜集入库、阅读待办与起步包），以便我能快速进入研究与写作。
@@ -595,3 +616,82 @@
 8. WHEN 用户取消 bootstrap THEN 系统 SHALL 终止后续步骤并返回可恢复状态（例如保存已完成的阶段与中间结果），以便用户后续继续执行
 9. WHEN 生成课题起步包 THEN 系统 SHALL 支持导出为本地 Markdown/Obsidian 友好格式，且 SHOULD 支持导出到 Notion（若配置鉴权）；导出内容至少包含：课题概览、初始问题树、来源清单、待办列表
 10. WHEN bootstrap 过程中发生失败 THEN 系统 SHALL 返回结构化错误与可重试建议，并记录可观测性事件（包含 requestId/tenantId/阶段信息）
+
+### 需求 39
+
+**用户故事:** 作为用户，我希望在开始一个新任务/项目之前能够选择或提供“场景模板”，以便快速获得符合目标的提示词、工具集、结构化输出与工作流策略。
+
+#### 验收标准
+
+1. WHEN 用户创建任务/项目 THEN 系统 SHALL 支持指定 `templateId` 或直接提交 `templateDefinition`（二选一）作为启动参数
+2. WHEN 使用模板启动 THEN 系统 SHALL 将模板解析为运行时配置（System Prompt、tools、结构化输出 schema、工作流/重试策略、引用/安全策略等）并注入到编排层
+3. WHEN 用户提供模板定义 THEN 系统 SHALL 对模板进行结构化校验（例如使用 Zod Schema），校验失败 MUST 返回结构化错误并指出违规字段
+4. WHEN 未指定模板 THEN 系统 SHALL 使用默认模板启动（例如通用对话、研究、学习等），且默认模板 MUST 可配置
+5. WHEN 模板包含工具声明 THEN 系统 SHALL 校验工具参数与返回结构是否可被系统支持（例如工具必须有 Zod 参数定义），不支持的工具 MUST 被拒绝并返回原因
+6. WHEN 模板包含输出结构 THEN 系统 SHALL 复用需求 22 的结构化输出机制，保证输出严格符合模板所声明的 Schema
+7. WHEN 模板需要复用/迁移 THEN 系统 SHOULD 支持模板的导入/导出（JSON/YAML 等）与版本化，且每次运行记录所使用的模板版本以便复现
+
+8. WHEN 模板面向本地开源模型（例如 GPT-OSS-20B） THEN 模板 SHOULD 支持声明并注入防御性提示词约束，以提高指令遵循与结构化输出稳定性
+
+### 需求 40
+
+**用户故事:** 作为用户，我希望 Niche 提供人机交互且体验良好的 UI，以便我能选择模板、管理任务/项目、查看中间步骤与引用，并导出成果。
+
+#### 验收标准
+
+1. WHEN 用户进入系统 THEN UI SHALL 提供模板选择与启动入口，并支持展示模板的说明、适用场景与所启用的工具/子代理概览
+2. WHEN 用户启动任务/项目 THEN UI SHALL 支持输入必要参数（例如研究主题/学习科目/约束条件），并能展示运行中状态与可取消操作
+3. WHEN Agent Proxy 运行多步工作流 THEN UI SHALL 以流式方式呈现中间步骤（思考/工具调用/阅读/生成等）并区分阶段
+4. WHEN 输出包含引用信息 THEN UI SHALL 支持点击引用查看原文定位信息（例如页码/offset/坐标）或等价证据展示
+5. WHEN 用户需要沉淀结果 THEN UI SHALL 支持导出为 Markdown/Obsidian 友好格式，并保留引用元数据
+
+6. WHEN 用户浏览核心界面（模板选择/任务执行/项目工作台/证据查看） THEN UI SHALL 保持统一的视觉语言（字体、字号层级、间距、颜色、组件样式）且不同页面间交互模式一致
+7. WHEN 系统提供主题能力 THEN UI SHOULD 支持明暗主题切换，并在切换后保持阅读对比度可用（正文与背景对比清晰）
+8. WHEN 用户在 UI 中阅读长内容（回答、引用原文、检索片段、深读内容） THEN UI SHALL 提供适合阅读的排版（段落间距、标题层级、代码/引用块样式）并支持折叠/展开
+9. WHEN 任务处于运行中 THEN UI SHALL 明确展示当前阶段、已完成/进行中步骤与可取消入口，并在失败时提供可读错误信息与重试入口
+10. WHEN UI 渲染中间步骤事件流 THEN UI SHALL 支持按步骤筛选/搜索（例如仅看 tool_call/tool_result 或仅看 citations），并支持复制单步内容
+11. WHEN 用户点击引用 THEN UI SHALL 在不离开当前上下文的情况下展示证据侧栏/弹层，包含来源标识（documentId/source）、定位信息（page/offset/坐标）与可复制的原文摘录
+12. WHEN 引用证据不可用或发生降级 THEN UI SHALL 显式标注降级原因（例如仅 chunkId 可用）并提示用户如何恢复（例如重新摄入/重试解析）
+13. WHEN 用户导出成果 THEN UI SHALL 提供导出预览与导出选项（是否包含引用、是否包含步骤摘要、是否包含来源清单），并在导出完成后提供可复制路径/链接
+14. WHEN 用户使用键盘导航 THEN UI SHOULD 支持不依赖鼠标完成核心流程（模板选择、启动、取消、查看引用、导出）且焦点状态清晰可见
+15. WHEN UI 展示状态反馈（loading/streaming/success/error） THEN UI SHALL 使用一致的状态样式与文案，并避免阻塞式全屏等待（除非用户主动选择）
+16. WHEN 页面在常见窗口尺寸下使用（桌面端） THEN UI SHALL 保证布局不溢出且主要操作无需水平滚动
+17. WHEN 前端首屏加载 THEN UI SHOULD 在可接受时间内完成可交互渲染，并在网络/服务慢时优先呈现骨架屏或占位布局以降低等待感
+
+### 需求 41
+
+**用户故事:** 作为用户，我希望当我在某个 Project/Workspace 下工作时，Niche 的检索与引用严格限定在该 Project 绑定的资料范围内，以避免知识污染并便于复现。
+
+#### 验收标准
+
+1. WHEN 用户在 UI 中进入某个 Project THEN 系统 SHALL 将该 Project 作为默认上下文，并将其 `projectId` 注入到请求级上下文对象
+2. WHEN Agent Proxy 或任一 Sub-agent 执行检索 THEN 系统 SHALL 默认带上 `projectId` 或等价隔离参数，并将检索范围限制在该 Project 对应的资料集合内
+3. WHEN 用户显式选择跨 Project 检索 THEN 系统 SHALL 要求二次确认或显式开关，并在输出中标记引用来源的 Project
+4. WHEN 输出包含 citation THEN 系统 SHALL 确保 citation 可映射回该 Project 的真实检索/深读结果，不得引用跨 Project 的不可追溯来源
+
+## 实施路线图（自用参考）
+
+1. **Phase 1: 基础设施**
+   - 部署/启动 RAGFlow
+   - 部署/启动本地推理服务（如 llama.cpp server）
+   - 验证 Node.js 能成功调用两者
+
+2. **Phase 2: 数据管道**
+   - 实现文件上传接口 -> 转发给 RAGFlow -> 等待解析完成
+   - 实现混合检索与深读工具接口
+
+3. **Phase 3: Agent Proxy 核心**
+   - 实现 Agent Proxy + Sub-agent 路由与编排
+   - 调试模板与提示词，提升工具调用准确率
+
+4. **Phase 4: UI/UX**
+   - 开发流式对话界面与步骤可视化
+   - 实现引用点击跳转/证据查看
+
+## 风险与对策（自用参考）
+
+| 风险点 | 描述 | 对策 |
+| :--- | :--- | :--- |
+| **推理延迟** | 本地模型多步思考可能导致首字延迟(TTFT)过高。 | 1. 通过缓存与并发策略降低端到端延迟。<br>2. UI 展示明确的步骤事件与进度信息。 |
+| **指令遵循失败** | 小概率下模型不调用工具或结构化输出失败。 | 1. 模板中加入 One-shot 示例与防御性约束。<br>2. 代码层增加格式校验，失败则把错误喂回模型重试。 |
+| **RAGFlow 解析慢** | 上传大文件可能长时间等待。 | 使用异步任务队列（如 BullMQ）处理摄入/解析，并提供状态查询与重试。 |
