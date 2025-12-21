@@ -1,6 +1,8 @@
 # tasks-prompts.md
 
-> 本文件参考 `specs/vertical-ai-framework/tasks-prompts-optimized.md` 的组织方式，基于 `specs/study-copilot/tasks.md` + `specs/study-copilot/design/` 系列设计文档整理为 **中文任务提示词**。
+> 本文件仅借鉴任务提示词的组织方式（排版结构），不引入其他文档的内容规范；一切需求/设计/任务口径以 `specs/study-copilot/` 下文档为准。
+> 
+> 本文件基于 `specs/study-copilot/tasks.md` + `specs/study-copilot/design/` 系列设计文档整理为 **中文任务提示词**。
 >
 > 使用方式：执行某个任务 `T#` 时，把对应任务的 Prompt（代码块）整体复制到对话中，并补充你本地的工程现状（目录结构、已有包名、是否已初始化 monorepo 等）。
 
@@ -33,14 +35,17 @@
      - `tests/{unit,property,integration,e2e}`：测试
 
 3. **默认验证命令（若任务未单独指定）**
-   - `pnpm -r lint`
-   - `pnpm -r test`
+   - 运行仓库现有的 lint/test 命令集合。
+   - 若仓库使用 pnpm，可参考：`pnpm -r lint`、`pnpm -r test`。
 
 4. **全局编码规范（强制）**
-   - TypeScript 5.x Strict（**禁止 `any`**）
+   - TypeScript Strict（**禁止 `any`**）
    - 所有输入/输出/配置/工具参数必须用 **Zod** 校验
-   - 测试：Vitest + fast-check（核心不变量尽可能用属性测试表达）
    - 错误消息（message）必须用 **英文**（便于日志搜索）；注释可中文
+
+5. **自动化验收原则（强制）**
+   - 每个任务的 Verification 优先写成**可自动化断言**（单元/集成/契约测试），避免仅“手工目测”。
+   - 契约相关（GraphQL/REST/Events/Streaming/Citation/Error）一律以 `specs/study-copilot/design/design-contracts.md` 为准，并使用 Zod schema 做断言。
 
 ---
 
@@ -55,20 +60,20 @@
 你的目标是完成任务 T1：工程初始化与开发工作流。
 
 # 全局约束与标准
-- TypeScript 5.x Strict；禁止 any。
+- TypeScript Strict；禁止 any。
 - Zod 覆盖所有 schema（输入/输出/配置）。
-- 测试：Vitest + fast-check。
 - 错误 message 使用英文。
+- 测试框架遵循仓库现状；若仓库尚未建立测试框架，可选用 Vitest（并在需要时使用属性测试库）。
 
 # References
 - tasks: specs/study-copilot/tasks.md (T1)
-- coding standards: .windsurf/rules/coding-standards.md
+- coding standards: （可选）若仓库内已有统一编码规范文件则遵循；本任务以 specs/study-copilot 为准
 
 # Execution Plan
 1) 建立 monorepo（若尚未存在）
 - Files:
   - pnpm workspace / turbo（如采用）
-  - root package.json / tsconfig / eslint / vitest
+  - root package.json / tsconfig / eslint / test runner config
   - packages/core, apps/api, apps/web 的最小目录
 - Requirements:
   - 能一条命令启动 dev（API 与 Web 可先占位）
@@ -79,8 +84,8 @@
   - .env.example（或等价）
   - packages/core/src/config/*（若采用）
 - Verification:
-  - pnpm -r lint
-  - pnpm -r test
+  - 运行仓库现有 lint 命令（例如 `pnpm -r lint`）
+  - 运行仓库现有 test 命令（例如 `pnpm -r test`）
 
 # Checklist
 - [ ] monorepo/目录结构就绪
@@ -89,6 +94,7 @@
 
 # Output
 - 输出你新增/修改的文件清单与关键设计决策（为何如此组织目录/脚本）。
+- 输出你实际使用的验证命令（lint/test/dev 启动命令）。
 ```
 
 ### Task T2：共享类型与契约基线（GraphQL/REST/Events）
@@ -155,7 +161,8 @@
 - 必含：requestId, tenantId, projectId(可选), taskId/sessionId(可选)
 
 # Verification
-- 触发一次最小请求（可 mock），日志里能搜到完整链路 requestId。
+- 自动化断言（至少一条）：
+  - 触发一次最小请求（可 mock），断言日志输出包含同一个 `requestId`，且该 `requestId` 同时出现在：入站日志、至少一个模型/工具/事件输出（按当前实现路径选择其一）。
 
 # Output
 - 输出：实现方式 + 示例日志行（脱敏）。
@@ -186,7 +193,9 @@
 - 所有检索与 evidence 必须带 projectId 且默认限制
 
 # Verification
-- 缺 tenantId / projectId 的请求必须失败并返回结构化错误。
+- 自动化断言（至少覆盖以下 2 类）：
+  - 缺少 `tenantId` 的请求：返回 `AUTH_ERROR`（或等价授权错误）且包含 `requestId`。
+  - 缺少 `projectId` 的检索/证据请求：返回 `AUTH_ERROR`（或等价隔离错误）且包含 `requestId`。
 
 # Output
 - 输出：上下文类型定义 + 关键拦截点（中间件/插件）列表。
@@ -212,17 +221,23 @@
 1) 定义 TemplateDefinition（Zod）
 - 必含：prompt/systemPrompt、tools、outputSchema(可选)、workflowPolicy(如 maxSteps/retry)、citationPolicy、guardrailsPolicy
 
-2) 校验失败错误模型
+2) 定义 TemplateRef（用于可复现）
+- templateId 模式：至少包含 `templateId`，并支持携带 `templateVersion`（或等价字段）
+- templateDefinition 模式：计算并记录 `templateDefinitionHash`（或等价字段），用于运行记录与复现定位
+
+3) 校验失败错误模型
 - message(英文) + details（指明违规字段路径）
 
-3) 默认模板策略
+4) 默认模板策略
 - 未指定 templateId/templateDefinition 时使用 default template
 
 # Verification
-- 单元/属性测试：随机生成部分字段缺失/非法类型输入 -> 必须被 schema 拒绝并包含字段路径。
+- 单元/属性测试（至少覆盖以下断言）：
+  - 随机生成部分字段缺失/非法类型输入 -> 必须被 schema 拒绝，并在错误 details 中包含字段路径。
+  - 对合法模板：`TemplateDefinition` 可被 parse 成功，并且生成的 `TemplateRef`（version/hash）字段不为空。
 
 # Output
-- 输出：TemplateDefinition schema + 校验入口函数 + 测试。
+- 输出：TemplateDefinition schema + TemplateRef 定义 + 校验入口函数 + 测试。
 ```
 
 ### Task T6：GraphQL 主干（Template/Project/Task/Session + createTask/cancelTask）
@@ -245,15 +260,19 @@
 - 校验 tenantId/projectId
 - 校验 templateId/templateDefinition（二选一）
 - 创建 task/session（可先 in-memory，但需抽象接口便于后续 DB）
+- 运行记录可复现：Task/Session 必须记录 `templateRef` 的 version/hash（见 T5）
 
 3) cancelTask 行为
 - 可取消正在运行的流式/工作流（与 T8/T9 对齐）
 
 # Verification
-- integration test：createTask -> 返回 taskId；cancelTask -> 状态变更可观测。
+- integration test（至少覆盖以下断言）：
+  - createTask -> 返回 taskId
+  - createTask 返回/可查询的 task/session 数据中包含 `templateRef`（version/hash）且非空
+  - cancelTask -> 状态变更可观测
 
 # Output
-- 输出：schema + resolver + 测试。
+- 输出：schema + resolver + 测试（含 templateRef 复现字段断言）。
 ```
 
 ### Task T7：Agent Proxy 最小实现：运行时配置构建 + wrapLanguageModel 链
@@ -282,13 +301,18 @@
   - 能阻断输出
   - 能产生可观测事件/日志（至少 requestId 可关联）
 
-4) structured output
+4) 引用合规（禁止伪造引用）
+- 当输出包含 citations 时：citation MUST 可映射回真实检索/深读结果（至少在 mock 环境也要能通过 Evidence API 验证）
+- 不可映射或跨 projectId：必须视为 `CONTRACT_VIOLATION`（或等价错误），禁止“编造 citationId”
+
+5) structured output
 - streamObject/generateObject + self-correction（重试上限可配置）
 
 # Verification
 - 属性测试：中间件顺序不变性（onion 模型）
 - 单元/集成：schema 不匹配触发重试，超过次数返回结构化错误
 - guardrails：至少 1 个可控用例可稳定阻断，并能在日志/事件里观测到原因
+- 引用合规：至少 1 个用例断言“输出中包含 citationId -> 调用 Evidence API 可返回对应证据”；不可映射时必须返回 `CONTRACT_VIOLATION`（或等价错误）
 
 # Output
 - 输出：Agent Proxy 核心代码 + 测试。
@@ -320,9 +344,11 @@
 - 客户端断开/取消 -> 取消底层模型请求
 
 # Verification
-- integration：请求 /api/stream 能收到数据流
-- property：headers/协议块格式符合预期（若你定义了属性 ID，请标注）
-- 观测：一次真实/模拟调用可看到 TTFT（日志或 metrics）
+- 自动化断言（至少覆盖以下断言）：
+  - integration：请求 `/api/stream` 能收到数据流，且能被“协议解析器”（按你实现的 decoder）完整解析
+  - error block：人为制造一次错误（例如 mock provider 抛错），断言返回可识别 error block，且可解析为 `AppError`（含 `code/message/retryable/requestId`）
+  - cancel：模拟客户端断开或调用 cancel，断言 server 侧取消底层模型请求（可通过 mock/spy/日志断言）
+  - TTFT：至少一次真实/模拟调用可观测到 TTFT 被记录（日志或 metrics 任一）
 
 # Output
 - 输出：路由实现 + 协议测试。
@@ -350,17 +376,26 @@
 3) 通道策略
 - 选择：与 stream 同通道或双通道（先实现一种 MVP）
 
-4) 取消与可恢复状态
+4) 前端可消费的区分规则
+- 明确 events 与正文 token 的区分方式（例如 block type、字段标记、或独立通道）
+- 明确 UI 侧如何按 `stepId/timestamp` 归并与排序（与 `design-frontend.md` 的“Normalizer”思路一致）
+
+5) 取消与可恢复状态
 - 用户取消后：事件流与任务状态进入稳定的“可恢复/可重试”状态
 - 前端可重新发起运行（不要求复用原连接，但要求状态机一致）
 
 # Verification
-- 单元：事件 schema 校验
-- 集成：执行一次任务能看到至少 3 类事件
-- 集成：取消后状态可恢复/可重试（至少 1 条用例可稳定复现）
+- 自动化断言（至少覆盖以下断言）：
+  - 单元：任意 StepEvent 都能被 Zod schema parse；`step_failed` 的 payload（若包含 error）可被 `AppError` schema parse。
+  - 单元：`tool_called` 的参数摘要已脱敏（断言不包含原始敏感字段；按你实现的脱敏策略写断言）。
+  - 集成：执行一次最小任务，事件流/通道至少出现 3 类事件（例如 `step_started`/`tool_called`/`step_completed`），且每条事件均包含 `requestId/taskId/stepId/timestamp`。
+  - 集成：取消任务后，不再产生新的 StepEvent，且 task 状态进入取消态（或等价的可恢复/可重试状态）。
 
 # Output
-- 输出：事件发射点列表 + 事件示例。
+- 输出（强制包含以下内容）：
+  - 事件发射点列表
+  - 至少 3 类事件示例（含 `requestId/taskId/stepId/timestamp`）
+  - 本次选择的通道策略（同通道/双通道）+ 区分规则（前端如何识别）
 ```
 
 ### Task T10：RAGFlow Adapter（检索 + 引用字段映射）
@@ -372,6 +407,7 @@
 
 # References
 - requirements: specs/study-copilot/requirements.md (R20, R21, R41)
+- contracts: specs/study-copilot/design/design-contracts.md (Citation / Evidence Model)
 
 # Execution Plan
 1) 实现检索适配器
@@ -382,10 +418,13 @@
 - RAGFlow 字段缺失/能力不足时，返回 citation.status=degraded 并记录原因
 
 # Verification
-- integration：mock RAGFlow 返回 -> citations 字段映射完整
+- 自动化断言（至少覆盖以下断言）：
+  - mock RAGFlow 返回 -> citations 字段映射完整，且可被 `Citation` schema parse
+  - 默认携带 projectId filter：当缺 projectId 或 projectId 不匹配时必须拒绝或降级并标注原因（按你的隔离策略实现）
+  - 字段缺失降级：缺少定位字段时 `status=degraded` 且 `degradedReason` 非空
 
 # Output
-- 输出：adapter + 映射表（字段 -> 统一模型）。
+- 输出：adapter + 映射表（字段 -> 统一模型）+ 降级示例（status=degraded + degradedReason）。
 ```
 
 ### Task T11：Evidence API（citationId -> 证据展示数据）
@@ -407,7 +446,10 @@
 - projectId 必须一致；跨 Project 默认拒绝或要求显式开关
 
 # Verification
-- integration：合法 citationId 返回；跨 projectId 返回 AUTH/隔离错误
+- 自动化断言（至少覆盖以下断言）：
+  - 合法 citationId 返回成功响应，且响应能被 Evidence 的 Zod schema 解析（以 T2 落地的 contracts schema 为准）
+  - 跨 projectId：返回 `AUTH_ERROR`（或等价隔离错误），且包含 `requestId`
+  - citation 不可验证：返回中能表达 `status=unavailable` 或等价降级信息，不允许伪造 snippet
 
 # Output
 - 输出：endpoint + 示例响应（脱敏）。
@@ -442,22 +484,34 @@
 - 状态反馈齐全：loading/empty/error/cancelled
 
 # Verification
-- e2e（最小）：启动 -> 看到流式输出 -> 看到 steps -> 点击引用拉证据
-- 键盘验收：不使用鼠标可完成最小闭环
+- 自动化断言（E2E 优先；使用仓库现有 e2e runner；若暂无则先建立最小可运行的 e2e 骨架并在本任务中落地）：
+  - 启动闭环：选择模板 -> 点击启动 -> 触发 `createTask` 并进入运行态（断言 UI 状态从 idle 进入 running，且能关联到 taskId 或等价标识）
+  - 流式增量：断言输出区存在“增量更新”（至少 2 次内容追加，而非只出现最终一次性渲染）
+  - Step Timeline：断言至少渲染 3 条事件（例如 `step_started`/`tool_called`/`step_completed`），并且每条事件都能显示或持有 `requestId/taskId/stepId/timestamp`
+  - 引用点击证据：断言点击引用后会触发 Evidence 请求，并在侧栏/弹层展示证据的来源标识 + 定位信息 + 状态（可验证/降级/不可用）
+  - 取消：运行中点击取消 -> 断言 stream 终止、UI 状态进入 cancelled（或等价状态），并且提供“重试/重新运行”入口
+  - 错误块：模拟后端返回 error block（或等价错误响应）-> 断言 UI 能展示错误信息，并提供重试入口
+  - 键盘可用性（可自动化）：使用键盘事件完成“选择模板 -> 启动 -> 聚焦输出/步骤 -> 打开引用证据 -> 关闭弹层/侧栏 -> 取消/重试”最小闭环（断言焦点状态与关键按钮可触达）
+  - 响应式断点（可自动化）：至少在 2 个 viewport 下跑通同一条 e2e 用例（例如移动端与桌面端），断言核心操作区无需水平滚动且关键按钮可见
 
 # Output
-- 输出：UI 关键组件清单 + 交互说明。
+- 输出：
+  - UI 关键组件清单 + 交互说明
+  - E2E 用例列表与断言点
+  - 测试数据/Mock 的组织方式（如何保证稳定复现）
+  - 失败排查指引：如何用 requestId 定位后端日志与前端步骤
 ```
 
 ### Task T13：导出（Markdown/Obsidian 友好）
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 Lead Engineer.
 目标：完成 T13（导出）。
 
 # References
 - requirements: specs/study-copilot/requirements.md (R3)
+- tasks: specs/study-copilot/tasks.md (T13)
 
 # Execution Plan
 1) 导出格式规范
@@ -466,10 +520,16 @@
 2) UI：导出预览 + 导出后反馈
 
 # Verification
-- 导出文件可在 Obsidian 打开阅读；引用元数据可保留
+- 自动化断言（至少覆盖以下断言）：
+  - 单元：导出函数/formatter 对同一输入输出 deterministic（同输入同输出），适合快照测试
+  - 单元：导出内容必须保留引用元数据（至少包含 citationId 与 locator/projectId 等关键字段，按你在 contracts 中落地的 schema）
+  - E2E（若导出在前端触发）：点击导出 -> 断言导出内容中包含正文 + 引用信息（或元数据块），并且导出完成后 UI 给出明确反馈
 
 # Output
-- 输出：导出格式示例（Markdown）。
+- 输出：
+  - 导出格式示例（Markdown）
+  - formatter 的输入/输出契约说明（哪些字段必须存在、哪些可选）
+  - 对应的单元测试/快照测试用例清单
 ```
 
 ---
@@ -485,17 +545,26 @@
 
 # References
 - requirements: specs/study-copilot/requirements.md (R14)
+- tasks: specs/study-copilot/tasks.md (T14)
 
 # Execution Plan
 1) Provider Adapter 抽象
-2) 路由策略（按复杂度/配置）
-3) 指标：延迟/成本/错误率
+- 统一模型调用入口（对齐 Vercel AI SDK 的 generateText/streamText 等调用方式）
+- 支持从配置切换 provider/model 而不改业务逻辑
+
+2) 路由策略（最小可用）
+- 基于配置或简单启发式（例如复杂度阈值）选择模型
+
+3) 指标
+- 至少记录：延迟、错误、token 用量（若可得）
 
 # Verification
-- integration：切换 provider 或模型无需改业务逻辑
+- 自动化断言（至少覆盖以下断言）：
+  - integration：切换 provider 或模型配置后，业务代码无需修改即可生效
+  - integration：当主 provider 不可用时能走 fallback（可用 mock/spy 断言）
 
 # Output
-- 输出：路由策略说明 + 配置示例。
+- 输出：路由策略说明 + 配置示例 + 最小回归用例。
 ```
 
 ### Task T15：降级/重试/错误模型统一 + Guardrails
@@ -508,6 +577,7 @@
 # References
 - requirements: specs/study-copilot/requirements.md (R7, R12)
 - contracts: specs/study-copilot/design/design-contracts.md (Error Model)
+- tasks: specs/study-copilot/tasks.md (T15)
 
 # Execution Plan
 1) AppError 统一模型
@@ -520,10 +590,13 @@
 - 阻断与安全事件记录
 
 # Verification
-- 集成：主 provider 故障 -> fallback 成功，并返回可读降级提示
+- 自动化断言（至少覆盖以下断言）：
+  - provider 超时/不可用：触发 fallback，且错误/降级路径输出统一 `AppError`（含 `code/message/retryable/requestId`）
+  - guardrails 阻断：输入或输出触发阻断时，返回 `GUARDRAIL_BLOCKED`（或等价错误码），且 `retryable=false`
+  - 引用契约违规：当出现不可映射 citation（或跨 projectId）时，返回 `CONTRACT_VIOLATION`（或等价错误码）
 
 # Output
-- 输出：错误码表 + 触发条件。
+- 输出：错误码表 + 触发条件 + 最小回归用例。
 ```
 
 ### Task T16：响应缓存
@@ -535,6 +608,7 @@
 
 # References
 - requirements: specs/study-copilot/requirements.md (R13)
+- tasks: specs/study-copilot/tasks.md (T16)
 
 # Execution Plan
 1) cache key 设计（包含模板/输入/检索摘要等）
@@ -542,10 +616,12 @@
 3) 命中标记（响应携带 cached 标识）
 
 # Verification
-- 集成：同输入重复请求命中缓存（可观测）
+- 自动化断言（至少覆盖以下断言）：
+  - integration：同输入重复请求命中缓存（断言：第二次请求不触发模型调用或等价昂贵路径；可用 mock/spy）
+  - integration：命中时响应显式标记缓存来源（字段名按你的契约实现）
 
 # Output
-- 输出：缓存 key 规则 + 命中示例。
+- 输出：缓存 key 规则 + 命中示例 + 最小回归用例。
 ```
 
 ---
@@ -562,6 +638,7 @@
 # References
 - requirements: specs/study-copilot/requirements.md (R4, R5, R20, R21)
 - contracts: specs/study-copilot/design/design-contracts.md
+- tasks: specs/study-copilot/tasks.md (T17)
 
 # Execution Plan
 1) stream protocol 测试
@@ -570,7 +647,12 @@
 4) RAGFlow 字段映射回归测试
 
 # Verification
-- pnpm -r test 必须通过
+- 自动化断言：契约测试必须在 CI/本地可重复运行并通过（使用仓库现有 test 命令）。
+- 最小断言清单（至少覆盖以下点）：
+  - stream protocol：成功块可解析、错误块可解析为 `AppError`、取消路径可被识别
+  - events schema：字段完整性 + `tool_called` 参数摘要脱敏断言
+  - citation/evidence：字段可被 schema parse + projectId 隔离断言
+  - RAGFlow 映射：字段变更导致 schema parse 失败时测试应失败（阻断回归）
 
 # Output
 - 输出：测试文件清单 + 覆盖的契约点。
@@ -580,7 +662,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 Lead Engineer.
 目标：完成 T18（端到端测试）。
 
 # References
@@ -588,19 +670,30 @@
 
 # Execution Plan
 - 用例覆盖：启动/取消/失败重试/引用点击/导出
+- 测试可复现性策略：
+  - provider / RAGFlow / Evidence 尽量用 mock 或确定性测试数据，保证 CI 可重复
+  - 所有测试失败必须输出 requestId（或等价追踪字段）便于定位
 
 # Verification
-- CI 或本地稳定可重复执行
+- 自动化断言：在 CI 或本地稳定可重复执行（以仓库现有 e2e runner 为准）
+- 最小用例矩阵（至少覆盖以下用例与断言点）：
+  - Happy path：模板选择 -> createTask -> stream 增量输出 -> step events 渲染 -> citations 出现 -> 点击 citation 拉取 evidence -> 导出成功
+  - Cancel：运行中取消 -> stream 停止 + 状态进入 cancelled -> 可重新运行
+  - Error：模拟 provider 失败 -> UI/客户端可识别 error block 并展示错误（含 retryable 语义）-> 重试后成功（或返回明确不可重试）
+  - Isolation：跨 projectId 的 evidence 请求必须失败（AUTH_ERROR 或等价隔离错误）
 
 # Output
-- 输出：E2E 用例列表与断言点。
+- 输出：
+  - E2E 用例列表与断言点
+  - 测试数据/Mock 的组织方式（如何保证稳定复现）
+  - 失败排查指引：如何用 requestId 定位后端日志与前端步骤
 ```
 
 ### Task T19：安全与合规测试（注入/越狱/伪造引用）
 
 ```markdown
 # Context
-你是 QA + Security Specialist。
+你是 QA + Security Specialist.
 目标：完成 T19（安全与合规测试）。
 
 # References
@@ -611,10 +704,16 @@
 2) 伪造引用回归样例
 
 # Verification
-- Guardrails 能稳定阻断并返回可解释原因
+- 自动化断言（至少覆盖以下断言）：
+  - 注入/越狱用例：触发 guardrails 时必须返回 `GUARDRAIL_BLOCKED`（或等价错误码），且 `retryable=false`，并包含 `requestId`
+  - 伪造引用用例：当出现不可映射 citation 或试图编造 citationId 时，必须返回 `CONTRACT_VIOLATION`（或等价错误码），并包含 `requestId`
+  - 回归保障：上述用例集在 CI/本地可重复运行（使用仓库现有 test runner），任一回归必须阻断
 
 # Output
-- 输出：安全用例清单 + 期望行为。
+- 输出：
+  - 安全用例清单（按类别分组：注入/越狱/伪造引用/跨 projectId 等）
+  - 每条用例的期望行为（对应的 AppError.code / guardrail 事件）
+  - 最小自动化测试文件清单
 ```
 
 ---
@@ -625,7 +724,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 Lead Engineer.
 目标：完成 T20（CI/CD 与发布检查清单）。
 
 # References
@@ -637,17 +736,21 @@
 2) 发布检查清单：环境变量、RAGFlow 配置、日志/告警开关
 
 # Verification
-- 主分支合入具备质量门禁
+- 自动化断言：
+  - CI 在主分支/PR 上执行 lint/test/build（使用仓库现有命令），失败则阻断合入
+  - 发布检查清单以 markdown 形式落盘（路径由你在本任务中确定），并至少包含：环境变量、RAGFlow 配置、日志/告警开关、回滚/降级策略
 
 # Output
-- 输出：CI 配置片段 + 发布检查清单。
+- 输出：
+  - CI 配置片段
+  - 发布检查清单（markdown，含文件路径）
 ```
 
 ### Task T21：运行手册与故障排查指引
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 Lead Engineer.
 目标：完成 T21（运行手册与故障排查）。
 
 # References
@@ -659,10 +762,14 @@
 - 通过 requestId 追踪的排查步骤
 
 # Verification
-- 新同学可按文档完成本地启动与问题定位
+- 自动化/可验收断言：
+  - runbook 以 markdown 落盘（路径由你在本任务中确定）
+  - runbook 至少包含：本地启动步骤、常见故障（provider 超时、RAGFlow 不可用、citation 降级）、以及“按 requestId 串联排查”的步骤
 
 # Output
-- 输出：runbook 文档内容。
+- 输出：
+  - runbook 文档内容（markdown，含文件路径）
+
 ```
 
 ---
