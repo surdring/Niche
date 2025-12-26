@@ -68,7 +68,7 @@
 
 ### 阶段 0：准备/基建
 
-#### T1 - 工程初始化与开发工作流
+#### T1 ✅ - 工程初始化与开发工作流
 - 关联需求：R10
 - 依赖：无
 - 产出/变更点：
@@ -79,7 +79,7 @@
   - 开发者可一条命令启动本地开发（至少能跑起占位服务/页面）。
   - CI（或本地）可执行 lint/test/build（哪怕是空用例）。
 
-#### T2 - 共享类型与契约基线（GraphQL/REST/Events）
+#### T2 ✅ - 共享类型与契约基线（GraphQL/REST/Events）
 - 关联需求：R4, R5, R6, R10, R21
 - 依赖：T1
 - 产出/变更点：
@@ -89,7 +89,7 @@
   - 前后端可复用同一套类型/Schema（至少在一个包/目录中统一维护）。
   - 具备最小契约测试样例（见 T17）可运行。
 
-#### T3 - 可观测性基线：requestId 贯穿 + 结构化日志
+#### T3 ✅ - 可观测性基线：requestId 贯穿 + 结构化日志
 - 关联需求：R11
 - 依赖：T1
 - 产出/变更点：
@@ -98,7 +98,7 @@
 - Done criteria：
   - 任意一次任务执行能通过 requestId 在日志中串起来。
 
-#### T4 - 隔离上下文：tenantId/projectId 注入与强制校验
+#### T4 ✅ - 隔离上下文：tenantId/projectId 注入与强制校验
 - 关联需求：R26, R41
 - 依赖：T1
 - 产出/变更点：
@@ -110,7 +110,7 @@
 
 ### 阶段 1：核心闭环（M1）
 
-#### T5 - 模板定义 Schema 与校验（含结构化输出 Schema）
+#### T5 ✅ - 模板定义 Schema 与校验（含结构化输出 Schema）
 - 关联需求：R1, R6
 - 依赖：T2
 - 产出/变更点：
@@ -121,7 +121,7 @@
   - `templateDefinition` 校验失败时返回可定位字段的结构化错误。
   - 默认模板可用且可配置。
 
-#### T6 - GraphQL 主干：Template/Project/Task/Session 最小模型
+#### T6 ✅ - GraphQL 主干：Template/Project/Task/Session 最小模型
 - 关联需求：R9, R10, R26, R41
 - 依赖：T4, T5
 - 产出/变更点：
@@ -132,7 +132,7 @@
   - 前端能通过 createTask 获得 taskId 并进入执行流程。
   - tenantId/projectId 默认生效。
 
-#### T7 - Agent Proxy 最小实现：运行时配置构建 + wrapLanguageModel 链
+#### T7 ✅ - Agent Proxy 最小实现：运行时配置构建 + wrapLanguageModel 链
 - 关联需求：R1, R2, R6, R7, R15
 - 依赖：T5, T6
 - 产出/变更点：
@@ -145,7 +145,7 @@
   - guardrails 在至少 1 个可控用例下可阻断输出，并产生可观测事件。
   - 当 schema 校验失败时可触发自我修正并最终返回结构化错误（若失败）。
 
-#### T8 - Streaming Endpoint：Vercel AI Data Stream Protocol 输出
+#### T8 ✅ - Streaming Endpoint：Vercel AI Data Stream Protocol 输出
 - 关联需求：R4, R10
 - 依赖：T7, T3
 - 产出/变更点：
@@ -158,7 +158,7 @@
   - 流式错误可被前端识别并展示。
   - 在一次真实/模拟的流式调用中可观测到 TTFT 指标（日志或 metrics 任一即可）。
 
-#### T9 - Step Events：事件模型与发射策略
+#### T9 ✅ - Step Events：事件模型与发射策略
 - 关联需求：R5
 - 依赖：T7, T2
 - 产出/变更点：
@@ -170,7 +170,7 @@
   - 事件包含 requestId、taskId、stepId。
   - 用户取消任务后，事件流与任务状态能进入“可恢复/可重试”的稳定状态（前端可重新发起运行）。
 
-#### T10 - RAGFlow Adapter：检索 + 引用字段映射
+#### T10 ✅ - RAGFlow Adapter：检索 + 引用字段映射
 - 关联需求：R20, R21, R41
 - 依赖：T4, T7
 - 产出/变更点：
@@ -181,7 +181,7 @@
   - 端到端任务能返回 citations（即使为模拟数据也要符合契约）。
   - 当 RAGFlow 字段缺失时有可解释降级策略（至少日志+降级标记）。
 
-#### T11 - Evidence API：citationId -> 证据展示数据
+#### T11 ✅ - Evidence API：citationId -> 证据展示数据
 - 关联需求：R21, R41, R10
 - 依赖：T10, T4
 - 产出/变更点：
@@ -191,7 +191,7 @@
   - UI 点击引用可拉取证据并展示。
   - 无权限/跨 Project 明确返回结构化错误。
 
-#### T12 - UI：模板选择/运行/steps/citations 的最小可用实现
+#### T12 ✅ - UI：模板选择/运行/steps/citations 的最小可用实现
 - 关联需求：R3, R4, R5, R21
 - 依赖：T6, T8, T9, T10, T11
 - 产出/变更点：
@@ -204,7 +204,7 @@
   - 响应式布局在常见断点下可用（移动端/桌面端不遮挡核心交互）。
   - 首屏加载与任务运行状态反馈明确（loading/empty/error/cancelled 状态齐全）。
 
-#### T13 - 导出：Markdown/Obsidian 友好格式
+#### T13 ✅ - 导出：Markdown/Obsidian 友好格式
 - 关联需求：R3
 - 依赖：T12
 - 产出/变更点：
@@ -215,7 +215,7 @@
 
 ### 阶段 2：可靠性/性能/成本（M2）
 
-#### T14 - Provider 与多模型路由（最小可用策略）
+#### T14 ✅ - Provider 与多模型路由（最小可用策略）
 - 关联需求：R14
 - 依赖：T7
 - 产出/变更点：
@@ -225,7 +225,7 @@
 - Done criteria：
   - 可在配置中切换 provider 或模型而不改业务逻辑。
 
-#### T15 - 降级/重试/错误模型统一 + Guardrails 接入
+#### ✅ T15 - 降级/重试/错误模型统一 + Guardrails 接入
 - 关联需求：R7, R12
 - 依赖：T3, T7, T8
 - 产出/变更点：
@@ -236,7 +236,7 @@
   - 主 provider 故障时可回退并产生清晰日志与用户可读提示。
   - guardrails 触发时能阻断并返回可解释原因。
 
-#### T16 - 缓存：响应缓存与缓存标记
+#### T16 ✅ - 缓存：响应缓存与缓存标记
 - 关联需求：R13
 - 依赖：T7, T10
 - 产出/变更点：
@@ -248,7 +248,7 @@
 
 ### 阶段 3：测试与质量
 
-#### T17 - 契约测试：stream/events/citation/ragflow 映射
+#### T17 ✅ - 契约测试：stream/events/citation/ragflow 映射
 - 关联需求：R4, R5, R21, R20
 - 依赖：T2, T8, T9, T10
 - 产出/变更点：

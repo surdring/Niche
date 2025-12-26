@@ -52,6 +52,30 @@
 - 可靠性：超时、重试、熔断、provider 故障转移。
 - 性能：TTFT、并发、缓存。
 
+## Response Caching (R13)
+
+### Cache Key
+- key 必须 deterministic，且包含：
+  - tenantId / projectId
+  - templateRef
+  - 输入 messages 摘要
+  - 检索摘要（当前实现基于检索输入：providerId + query）
+  - modelInfo（**必须包含 modelId**；否则为避免跨模型错误命中，应禁用缓存）
+
+### Semantics
+- 缓存以“请求输入”为准：相同输入 => 相同 key。
+- 检索结果（citations）会随索引/数据变化而变化；当前实现不会把检索输出纳入 key（因为需要在命中缓存时跳过检索）。
+  - 这意味着在 TTL 未过期时可能返回“旧的 citations/文本”。
+
+### Invalidation
+- 当前仅支持 TTL 过期与 LRU 淘汰。
+- 不支持主动失效（例如模板更新、数据更新时按 tag/pattern 批量清除）。
+  - 作为已知限制，建议在后续任务引入显式 invalidation API 与更强的版本/etag 机制。
+
+### Observability
+- 目前以结构化日志/事件记录 cache hit/miss/store。
+- 聚合指标（命中率、缓存大小、淘汰次数等）建议后续接入 Prometheus/Grafana。
+
 ## Observability
 - OpenTelemetry：
   - request span

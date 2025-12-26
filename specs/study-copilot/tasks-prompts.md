@@ -55,7 +55,7 @@
 
 ```markdown
 # Context
-你是 Niche/Study Copilot 的 Lead Engineer。
+你是 Niche/Study Copilot 的 负责落地与验收的工程师。
 你正在执行 Phase 0：准备/基建。
 你的目标是完成任务 T1：工程初始化与开发工作流。
 
@@ -88,9 +88,9 @@
   - 运行仓库现有 test 命令（例如 `pnpm -r test`）
 
 # Checklist
-- [ ] monorepo/目录结构就绪
-- [ ] lint/test/build 脚本可运行
-- [ ] .env.example 存在且字段最小可用
+- [x] monorepo/目录结构就绪
+- [x] lint/test/build 脚本可运行
+- [x] .env.example 存在且字段最小可用
 
 # Output
 - 输出你新增/修改的文件清单与关键设计决策（为何如此组织目录/脚本）。
@@ -101,7 +101,7 @@
 
 ```markdown
 # Context
-你是 Niche/Study Copilot 的 Lead Engineer。
+你是 Niche/Study Copilot 的 负责落地与验收的工程师。
 你正在执行 Phase 0：准备/基建。
 你的目标是完成任务 T2：共享类型与契约基线（GraphQL/REST/Events）。
 
@@ -132,8 +132,8 @@
 - 至少 1 个单元测试验证：schema 能解析/拒绝非法输入。
 
 # Checklist
-- [ ] contracts 以 Zod schema 形式定义
-- [ ] 前后端可共享/复用（至少路径规划明确）
+- [x] contracts 以 Zod schema 形式定义
+- [x] 前后端可共享/复用（至少路径规划明确）
 
 # Output
 - 输出：契约文件路径 + 核心 schema 片段说明 + 测试用例。
@@ -143,7 +143,7 @@
 
 ```markdown
 # Context
-你是 Niche/Study Copilot 的 Lead Engineer。
+你是 Niche/Study Copilot 的 负责落地与验收的工程师。
 你正在执行 Phase 0：准备/基建。
 你的目标是完成任务 T3：可观测性基线。
 
@@ -164,6 +164,11 @@
 - 自动化断言（至少一条）：
   - 触发一次最小请求（可 mock），断言日志输出包含同一个 `requestId`，且该 `requestId` 同时出现在：入站日志、至少一个模型/工具/事件输出（按当前实现路径选择其一）。
 
+# Checklist
+- [x] 定义 requestId 生成与透传策略
+- [x] 结构化日志字段规范落地（requestId/tenantId/projectId/taskId/sessionId）
+- [x] 自动化断言：同一 requestId 同时出现在入站日志与至少一个事件/输出中
+
 # Output
 - 输出：实现方式 + 示例日志行（脱敏）。
 ```
@@ -172,7 +177,7 @@
 
 ```markdown
 # Context
-你是 Niche/Study Copilot 的 Lead Engineer。
+你是 Niche/Study Copilot 的 负责落地与验收的工程师。
 你正在执行 Phase 0：准备/基建。
 你的目标是完成任务 T4：隔离上下文。
 
@@ -197,6 +202,12 @@
   - 缺少 `tenantId` 的请求：返回 `AUTH_ERROR`（或等价授权错误）且包含 `requestId`。
   - 缺少 `projectId` 的检索/证据请求：返回 `AUTH_ERROR`（或等价隔离错误）且包含 `requestId`。
 
+# Checklist
+- [x] 定义 RequestContext（requestId/tenantId/projectId?）
+- [x] API 层强制注入与校验（REST: /api/stream、/api/evidence、/api/upload）
+- [x] 自动化断言：缺 tenantId -> AUTH_ERROR + requestId
+- [x] 自动化断言：缺 projectId（检索/证据）-> AUTH_ERROR + requestId
+
 # Output
 - 输出：上下文类型定义 + 关键拦截点（中间件/插件）列表。
 ```
@@ -209,7 +220,7 @@
 
 ```markdown
 # Context
-你是 Niche/Study Copilot 的 Lead Engineer。
+你是 Niche/Study Copilot 的 负责落地与验收的工程师。
 你正在执行 Phase 1：核心闭环。
 目标：完成 T5（模板定义 Schema 与校验）。
 
@@ -236,6 +247,13 @@
   - 随机生成部分字段缺失/非法类型输入 -> 必须被 schema 拒绝，并在错误 details 中包含字段路径。
   - 对合法模板：`TemplateDefinition` 可被 parse 成功，并且生成的 `TemplateRef`（version/hash）字段不为空。
 
+# Checklist
+- [x] 定义 TemplateDefinition（Zod）并包含 required 字段
+- [x] 定义 TemplateRef（templateId/version 或 templateDefinitionHash）用于可复现
+- [x] 校验失败返回结构化错误（英文 message + details.issues 含字段路径）
+- [x] 默认模板策略（未指定 template 时 fallback）
+- [x] 单元/属性测试覆盖：非法输入拒绝且 details 含路径；合法模板生成 ref 的 version/hash 非空
+
 # Output
 - 输出：TemplateDefinition schema + TemplateRef 定义 + 校验入口函数 + 测试。
 ```
@@ -244,8 +262,8 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
-目标：完成 T6（GraphQL 主干）。
+你是 负责落地与验收的工程师。
+目标：完成 T6：GraphQL 主干（Template/Project/Task/Session + createTask/cancelTask）。
 
 # References
 - requirements: specs/study-copilot/requirements.md (R9, R10, R26, R41)
@@ -271,6 +289,13 @@
   - createTask 返回/可查询的 task/session 数据中包含 `templateRef`（version/hash）且非空
   - cancelTask -> 状态变更可观测
 
+# Checklist
+- [x] 实现 GraphQL schema：Query templates/projects/tasks
+- [x] 实现 Mutation：createTask/cancelTask（含输入输出类型）
+- [x] createTask：校验 tenantId/projectId、templateId/templateDefinition（二选一），创建 task/session
+- [x] 记录可复现字段：Task/Session 包含 `templateRef` 的 version/hash
+- [x] integration tests 覆盖：createTask 返回 taskId；templateRef 非空；cancelTask 状态可观测
+
 # Output
 - 输出：schema + resolver + 测试（含 templateRef 复现字段断言）。
 ```
@@ -279,8 +304,8 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
-目标：完成 T7（Agent Proxy 最小实现）。
+你是 负责落地与验收的工程师。
+目标：完成 T7：Agent Proxy 最小实现：运行时配置构建 + wrapLanguageModel 链。
 
 # References
 - requirements: specs/study-copilot/requirements.md (R1, R2, R6, R7, R15)
@@ -314,6 +339,14 @@
 - guardrails：至少 1 个可控用例可稳定阻断，并能在日志/事件里观测到原因
 - 引用合规：至少 1 个用例断言“输出中包含 citationId -> 调用 Evidence API 可返回对应证据”；不可映射时必须返回 `CONTRACT_VIOLATION`（或等价错误）
 
+# Checklist
+- [x] runtime config 构建（templateId/templateDefinition -> runtime config）
+- [x] wrapLanguageModel 中间件链：顺序执行 + 允许短路
+- [x] 支持 MockLanguageModel（便于测试）
+- [x] guardrails hook：可阻断输出且可观测（StepEvent 含 requestId）
+- [x] 引用合规：citations 可映射回 EvidenceProvider；不可映射/跨 projectId -> CONTRACT_VIOLATION
+- [x] structured output：schema 不匹配触发重试；超过次数返回结构化错误
+
 # Output
 - 输出：Agent Proxy 核心代码 + 测试。
 ```
@@ -322,8 +355,8 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
-目标：完成 T8（Streaming Endpoint）。
+你是 负责落地与验收的工程师。
+目标：完成 T8：Streaming Endpoint：Vercel AI Data Stream Protocol 输出。
 
 # References
 - requirements: specs/study-copilot/requirements.md (R4, R10)
@@ -354,12 +387,22 @@
 - 输出：路由实现 + 协议测试。
 ```
 
+# Checklist
+- [x] 实现 `POST /api/stream` 请求体校验（Zod）
+- [x] 输出严格遵循 Vercel AI Data Stream Protocol v1（`X-Vercel-AI-Data-Stream: v1` + `text/plain; charset=utf-8`）
+- [x] 提供协议 encoder/decoder（@niche/core）并在集成测试中使用 decoder 断言可解析
+- [x] streaming error 转换为可识别 error block（包含可解析 `AppError`）
+- [x] 客户端断开触发取消（AbortController）并可在测试中观测到底层 provider 被 abort
+- [x] TTFT 与总耗时可观测（与 requestId 关联）
+- [x] 集成测试覆盖：parseability / error block / cancel / TTFT
+
 ### Task T9：Step Events：事件模型与发射策略
 
 ```markdown
 # Context
-你是 Lead Engineer。
-目标：完成 T9（Step Events）。
+你是 负责落地与验收的工程师。
+目标：完成 T9（Step Events）：
+：事件模型与发射策略。
 
 # References
 - requirements: specs/study-copilot/requirements.md (R5)
@@ -396,13 +439,21 @@
   - 事件发射点列表
   - 至少 3 类事件示例（含 `requestId/taskId/stepId/timestamp`）
   - 本次选择的通道策略（同通道/双通道）+ 区分规则（前端如何识别）
+
+# Checklist
+- [x] 实现 StepEvent 事件定义：step_started/step_progress/tool_called/tool_result/step_completed/step_failed
+- [x] tool_called.argsSummary 使用脱敏摘要（不泄露 token/apiKey/secret 等字段）
+- [x] 选择并实现通道策略：同通道（Vercel AI Data Stream `data-step-event` part）
+- [x] 明确前端区分规则：token(`0:`) vs event(part.type=`data-step-event`)
+- [x] 集成测试：最小任务至少出现 3 类事件，且包含 requestId/taskId/stepId/timestamp
+- [x] 集成测试：取消任务后停止产生新的 StepEvent，task 进入 cancelled（可重试）状态
 ```
 
 ### Task T10：RAGFlow Adapter（检索 + 引用字段映射）
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T10（RAGFlow Adapter）。
 
 # References
@@ -423,6 +474,18 @@
   - 默认携带 projectId filter：当缺 projectId 或 projectId 不匹配时必须拒绝或降级并标注原因（按你的隔离策略实现）
   - 字段缺失降级：缺少定位字段时 `status=degraded` 且 `degradedReason` 非空
 
+# Checklist
+- [x] 代码编译通过（npm run build）
+- [x] 类型检查通过（npm run typecheck）
+- [x] Lint 检查通过（npm run lint）
+- [x] RAGFlow adapter 输入/输出 schema 定义完成（Zod）
+- [x] RAGFlow client 实现完成（含 requestId/tenantId/projectId 透传）
+- [x] RAGFlow -> Citation 字段映射完成
+- [x] 降级策略完成（status=degraded + degradedReason）
+- [x] 错误模型对齐（AppError/等价，英文 message）
+- [x] 单元测试覆盖：映射/隔离/降级/错误分支
+- [x] 集成测试覆盖：端到端执行可返回 citations（可用 mock）
+
 # Output
 - 输出：adapter + 映射表（字段 -> 统一模型）+ 降级示例（status=degraded + degradedReason）。
 ```
@@ -431,7 +494,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T11（Evidence API）。
 
 # References
@@ -459,7 +522,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T12（UI 最小可用实现）。
 
 # References
@@ -494,6 +557,19 @@
   - 键盘可用性（可自动化）：使用键盘事件完成“选择模板 -> 启动 -> 聚焦输出/步骤 -> 打开引用证据 -> 关闭弹层/侧栏 -> 取消/重试”最小闭环（断言焦点状态与关键按钮可触达）
   - 响应式断点（可自动化）：至少在 2 个 viewport 下跑通同一条 e2e 用例（例如移动端与桌面端），断言核心操作区无需水平滚动且关键按钮可见
 
+# Checklist
+- [x] 代码编译通过（npm run build）
+- [x] 类型检查通过（npm run typecheck）
+- [x] Lint 检查通过（npm run lint）
+- [x] 测试通过（npm run test）
+- [x] 启动闭环：选择模板 -> createTask -> running
+- [x] 流式增量：输出至少追加 2 次
+- [x] Step Timeline：至少渲染 3 条事件
+- [x] 引用点击证据：触发 Evidence 请求并展示
+- [x] 取消：进入 cancelled 且提供重试入口
+- [x] 键盘可用性：核心流程可用
+- [x] 响应式断点：移动端/桌面端核心交互可用
+
 # Output
 - 输出：
   - UI 关键组件清单 + 交互说明
@@ -506,7 +582,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer.
+你是 负责落地与验收的工程师.
 目标：完成 T13（导出）。
 
 # References
@@ -525,6 +601,11 @@
   - 单元：导出内容必须保留引用元数据（至少包含 citationId 与 locator/projectId 等关键字段，按你在 contracts 中落地的 schema）
   - E2E（若导出在前端触发）：点击导出 -> 断言导出内容中包含正文 + 引用信息（或元数据块），并且导出完成后 UI 给出明确反馈
 
+# Checklist
+- [x] formatter 对同一输入输出 deterministic（快照/等价断言）
+- [x] 导出内容保留引用元数据（citationId/locator/projectId 等）
+- [x] UI：导出预览 + Copy/Download 反馈（含单元测试）
+
 # Output
 - 输出：
   - 导出格式示例（Markdown）
@@ -540,7 +621,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T14（Provider 与多模型路由）。
 
 # References
@@ -563,6 +644,13 @@
   - integration：切换 provider 或模型配置后，业务代码无需修改即可生效
   - integration：当主 provider 不可用时能走 fallback（可用 mock/spy 断言）
 
+# Checklist
+- [x] Provider Adapter 抽象已落地（generateText/streamText）
+- [x] 最小确定性路由策略已落地（primary + fallbacks）
+- [x] integration：切换 provider/model 配置后可生效（无需改业务代码）
+- [x] integration：主 provider 失败触发 fallback
+- [x] integration：路由决策日志包含 requestId/taskId/providerId/modelId
+
 # Output
 - 输出：路由策略说明 + 配置示例 + 最小回归用例。
 ```
@@ -571,7 +659,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T15（降级/重试/错误模型 + Guardrails）。
 
 # References
@@ -603,7 +691,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T16（响应缓存）。
 
 # References
@@ -632,7 +720,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T17（契约测试）。
 
 # References
@@ -662,7 +750,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer.
+你是 负责落地与验收的工程师.
 目标：完成 T18（端到端测试）。
 
 # References
@@ -724,7 +812,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer.
+你是 负责落地与验收的工程师.
 目标：完成 T20（CI/CD 与发布检查清单）。
 
 # References
@@ -750,7 +838,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer.
+你是 负责落地与验收的工程师.
 目标：完成 T21（运行手册与故障排查）。
 
 # References
@@ -782,7 +870,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T22（多模态输入）。
 
 # References
@@ -804,7 +892,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T23（数据处理管道）。
 
 # References
@@ -826,7 +914,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T24（OCR 支持：图片与扫描 PDF）。
 
 # References
@@ -855,7 +943,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T25（插件化架构落地）。
 
 # References
@@ -881,7 +969,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T26（配置管理系统）。
 
 # References
@@ -905,7 +993,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T27（CLI 工具）。
 
 # References
@@ -929,7 +1017,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T28（反馈收集机制）。
 
 # References
@@ -952,7 +1040,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T29（提示词管理系统）。
 
 # References
@@ -976,7 +1064,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T30（评估框架）。
 
 # References
@@ -1000,7 +1088,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T31（合成数据生成）。
 
 # References
@@ -1025,7 +1113,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T32（多租户与配额管理）。
 
 # References
@@ -1049,7 +1137,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：执行 Research Copilot 扩展任务（T33-T45）。请一次只执行一个任务。
 
 # References
@@ -1069,7 +1157,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T33（PDF 结构化解析与页码级引用溯源）。
 
 # References
@@ -1092,7 +1180,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T34（联网实时搜索并入库）。
 
 # References
@@ -1115,7 +1203,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T35（研究项目工作台）。
 
 # References
@@ -1137,7 +1225,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T36（Notion 导出）。
 
 # References
@@ -1159,7 +1247,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T37（强引用模式）。
 
 # References
@@ -1182,7 +1270,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T38（约束 RAGFlow 字段能力与契约）。
 
 # References
@@ -1204,7 +1292,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T39（长文档处理策略与成本控制）。
 
 # References
@@ -1227,7 +1315,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T40（深度解析）。
 
 # References
@@ -1249,7 +1337,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T41（页面坐标级引用）。
 
 # References
@@ -1271,7 +1359,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T42（混合检索工具）。
 
 # References
@@ -1293,7 +1381,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T43（按页范围深度阅读）。
 
 # References
@@ -1316,7 +1404,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T44（本地模型与异步解析能力）。
 
 # References
@@ -1339,7 +1427,7 @@
 
 ```markdown
 # Context
-你是 Lead Engineer。
+你是 负责落地与验收的工程师。
 目标：完成 T45（研究项目 bootstrap）。
 
 # References
