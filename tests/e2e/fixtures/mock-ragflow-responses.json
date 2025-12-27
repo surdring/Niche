@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "search": {
+    "chunks": [
+      {
+        "chunk_id": "chunk_proj_default_1",
+        "document_id": "doc_1",
+        "content": "mock snippet",
+        "page_number": 1,
+        "offset_start": 0,
+        "offset_end": 10,
+        "score": 0.9
+      }
+    ]
+  }
+}

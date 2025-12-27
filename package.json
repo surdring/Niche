@@ -11,7 +11,7 @@
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "test": "turbo run test && vitest run tests/integration",
+    "test": "turbo run test && vitest run tests/ci && vitest run tests/docs && vitest run tests/integration && vitest run tests/e2e && vitest run tests/security",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

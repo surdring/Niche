@@ -128,10 +128,14 @@ describe("T12 e2e-ish", () => {
 
   let recorded: RecordedRequest[] = [];
   let createTaskRequestId: string | undefined;
+  let streamScenario: "happy" | "error" | "error_then_happy" = "happy";
+  let streamCallCount = 0;
 
   beforeEach(() => {
     recorded = [];
     createTaskRequestId = undefined;
+    streamScenario = "happy";
+    streamCallCount = 0;
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -243,6 +247,47 @@ describe("T12 e2e-ish", () => {
 
       if (url === "/api/stream") {
         const rid = headers.get("x-request-id") ?? "req_stream_unknown";
+        streamCallCount += 1;
+
+        const shouldFail =
+          streamScenario === "error" || (streamScenario === "error_then_happy" && streamCallCount === 1);
+
+        if (shouldFail) {
+          const lines = [
+            { delayMs: 0, line: encodeVercelAiDataStreamPartsLine([{ type: "data-stage", data: { stage: "answer" } }]) },
+            {
+              delayMs: 10,
+              line: encodeVercelAiDataStreamPartsLine([
+                {
+                  type: "data-app-error",
+                  data: {
+                    code: "UPSTREAM_UNAVAILABLE",
+                    message: `Mock stream error (requestId=${rid})`,
+                    retryable: true,
+                    requestId: rid
+                  }
+                }
+              ])
+            },
+            {
+              delayMs: 20,
+              line: encodeVercelAiDataStreamFinishMessageLine({
+                finishReason: "error",
+                usage: { promptTokens: 0, completionTokens: 0 }
+              })
+            }
+          ];
+
+          const body = makeStreamBody(lines, init?.signal ?? undefined);
+          return new Response(body, {
+            status: 200,
+            headers: {
+              "x-request-id": rid,
+              "X-Vercel-AI-Data-Stream": "v1",
+              "Content-Type": "text/plain; charset=utf-8"
+            }
+          });
+        }
 
         const citation: Citation = {
           citationId: "c_1",
@@ -508,6 +553,78 @@ describe("T12 e2e-ish", () => {
         });
       });
       expect(getText(outputEl)).not.toContain("Hello world");
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("error: shows error block then retry succeeds", async () => {
+    await setWindowWidth(1024);
+    streamScenario = "error_then_happy";
+
+    const rendered = await renderApp();
+
+    try {
+      await waitFor(() => {
+        const btn = rendered.container.querySelector<HTMLButtonElement>("[data-testid='run-btn']");
+        expect(btn).not.toBeNull();
+        expect(btn?.disabled).toBe(false);
+      });
+
+      await act(async () => {
+        rendered.container.querySelector<HTMLButtonElement>("[data-testid='run-btn']")?.click();
+      });
+
+      await waitFor(() => {
+        const text = getText(rendered.container);
+        expect(text).toContain("Run status");
+        expect(text).toContain("error");
+        expect(text).toContain("UPSTREAM_UNAVAILABLE");
+      });
+
+      const streamReqs1 = recorded.filter((r) => r.url === "/api/stream");
+      expect(streamReqs1.length).toBe(1);
+      const rid1 = streamReqs1[0]?.headers.get("x-request-id") ?? "";
+      expect(rid1.length).toBeGreaterThan(0);
+
+      await waitFor(() => {
+        const text = getText(rendered.container);
+        expect(text).toContain(`requestId=${rid1}`);
+        expect(text).toContain("retryable=true");
+      });
+
+      await waitFor(() => {
+        const retryBtn = rendered.container.querySelector<HTMLButtonElement>("[data-testid='retry-btn']");
+        expect(retryBtn).not.toBeNull();
+        expect(retryBtn?.disabled).toBe(false);
+      });
+
+      const retryBtn = rendered.container.querySelector<HTMLButtonElement>("[data-testid='retry-btn']");
+      expect(retryBtn?.disabled).toBe(false);
+
+      await act(async () => {
+        retryBtn?.click();
+      });
+
+      await waitFor(() => {
+        const outputEl = rendered.container.querySelector("[data-testid='output']");
+        expect(getText(outputEl)).toContain("Hello world");
+      });
+
+      await waitFor(() => {
+        const text = getText(rendered.container);
+        expect(text).toContain("Run status");
+        expect(text).toContain("completed");
+      });
+
+      const streamReqs2 = recorded.filter((r) => r.url === "/api/stream");
+      expect(streamReqs2.length).toBe(2);
+
+      const rid2 = streamReqs2[1]?.headers.get("x-request-id") ?? "";
+      expect(rid2.length).toBeGreaterThan(0);
+      expect(rid2).not.toBe(rid1);
+
+      expect(getText(rendered.container)).not.toContain("UPSTREAM_UNAVAILABLE");
     } finally {
       await rendered.unmount();
     }

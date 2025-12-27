@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { SecurityEventSchema, StepEventSchema, type SecurityEvent, type StepEvent } from "../contracts/events";
+import { createToolArgsSummary, SecurityEventSchema, StepEventSchema, type SecurityEvent, type StepEvent } from "../contracts/events";
 import { createAppError, type AppError } from "../contracts/error";
 import type { RequestContext } from "../contracts/context";
 import type { Citation } from "../contracts/citation";
@@ -29,10 +29,27 @@ export type AgentProxyOutput<T> = {
 
 export type RunAgentProxyOptions<TContext extends RequestContext> = {
   guardrails?: GuardrailsHook<TContext>;
+  toolCalls?: readonly AgentProxyToolCall[];
+  toolExecutor?: AgentProxyToolExecutor<TContext>;
   evidenceProvider?: EvidenceProvider<TContext>;
   eventSink?: AgentProxyEventSink;
   securityEventSink?: AgentProxySecurityEventSink;
 };
+
+export type AgentProxyToolCall = {
+  toolName: string;
+  args: unknown;
+};
+
+export type AgentProxyToolExecutorInput = {
+  toolName: string;
+  args: unknown;
+};
+
+export type AgentProxyToolExecutor<TContext extends RequestContext> = (
+  ctx: TContext,
+  input: AgentProxyToolExecutorInput
+) => Promise<unknown>;
 
 const emit = (sink: AgentProxyEventSink | undefined, event: StepEvent): void => {
   if (sink === undefined) {
@@ -148,6 +165,152 @@ export const runAgentProxy = async <TContext extends RequestContext, TStructured
   }
 
   try {
+    const toolCalls = options?.toolCalls;
+    if (toolCalls !== undefined && toolCalls.length > 0) {
+      if (options?.toolExecutor === undefined) {
+        const error = createContractViolationError(ctx.requestId, "Tool executor is required to run tool calls", {
+          toolCount: toolCalls.length
+        });
+        emit(
+          options?.eventSink,
+          StepEventSchema.parse({
+            type: "step_failed",
+            taskId,
+            stepId,
+            stepName,
+            timestamp: nowIso(),
+            requestId: ctx.requestId,
+            payload: { error }
+          })
+        );
+        return { ok: false, error };
+      }
+
+      for (const call of toolCalls) {
+        const toolName = z.string().min(1).parse(call.toolName);
+
+        const tool = config.tools.find((t) => t.name === toolName);
+        if (tool === undefined) {
+          const error = createContractViolationError(ctx.requestId, "Unknown tool", { toolName });
+          emit(
+            options?.eventSink,
+            StepEventSchema.parse({
+              type: "step_failed",
+              taskId,
+              stepId,
+              stepName,
+              timestamp: nowIso(),
+              requestId: ctx.requestId,
+              payload: { error }
+            })
+          );
+          return { ok: false, error };
+        }
+
+        const parsedArgs = tool.argsSchema.safeParse(call.args);
+        if (!parsedArgs.success) {
+          const error = createContractViolationError(ctx.requestId, "Invalid tool args", {
+            toolName,
+            issues: parsedArgs.error.issues
+          });
+          emit(
+            options?.eventSink,
+            StepEventSchema.parse({
+              type: "step_failed",
+              taskId,
+              stepId,
+              stepName,
+              timestamp: nowIso(),
+              requestId: ctx.requestId,
+              payload: { error }
+            })
+          );
+          return { ok: false, error };
+        }
+
+        const argsSummary = createToolArgsSummary(parsedArgs.data, { maxLen: 512 });
+        const guardrailsContent = `${toolName} ${argsSummary}`;
+
+        emit(
+          options?.eventSink,
+          StepEventSchema.parse({
+            type: "tool_called",
+            taskId,
+            stepId,
+            stepName,
+            timestamp: nowIso(),
+            requestId: ctx.requestId,
+            payload: {
+              toolName,
+              argsSummary
+            }
+          })
+        );
+
+        if (options?.guardrails !== undefined) {
+          const decision = await options.guardrails(ctx, { stage: "tool_call", content: guardrailsContent });
+          if (decision.action === "block") {
+            emitSecurity(
+              options?.securityEventSink,
+              SecurityEventSchema.parse({
+                type: "guardrail_blocked",
+                timestamp: nowIso(),
+                requestId: ctx.requestId,
+                tenantId: ctx.tenantId,
+                ...(ctx.projectId !== undefined ? { projectId: ctx.projectId } : {}),
+                taskId,
+                stepId,
+                stepName,
+                payload: {
+                  stage: "tool_call",
+                  reason: decision.reason,
+                  contentLength: guardrailsContent.length
+                }
+              })
+            );
+
+            const error = createGuardrailBlockedError(ctx.requestId, decision.reason);
+            emit(
+              options?.eventSink,
+              StepEventSchema.parse({
+                type: "step_failed",
+                taskId,
+                stepId,
+                stepName,
+                timestamp: nowIso(),
+                requestId: ctx.requestId,
+                payload: { error }
+              })
+            );
+            return { ok: false, error };
+          }
+        }
+
+        const toolResult = await options.toolExecutor(ctx, {
+          toolName,
+          args: parsedArgs.data
+        });
+
+        const resultSummary = createToolArgsSummary(toolResult, { maxLen: 256 });
+
+        emit(
+          options?.eventSink,
+          StepEventSchema.parse({
+            type: "tool_result",
+            taskId,
+            stepId,
+            stepName,
+            timestamp: nowIso(),
+            requestId: ctx.requestId,
+            payload: {
+              toolName,
+              resultSummary
+            }
+          })
+        );
+      }
+    }
+
     if (config.outputSchema !== undefined) {
       const schemaParsed = config.outputSchema as z.ZodType<TStructured>;
 

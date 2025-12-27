@@ -1130,15 +1130,15 @@
   - E2E：跨 projectId 证据请求返回 AUTH_ERROR
 
 # Checklist
-- [ ] 代码编译通过（npm run build）
-- [ ] 类型检查通过（npm run typecheck）
-- [ ] Lint 检查通过（npm run lint）
-- [ ] mock 策略完成（provider/ragflow/evidence）
-- [ ] Happy path 用例完成
-- [ ] Cancel 用例完成
-- [ ] Error/Retry 用例完成
-- [ ] Isolation 用例完成
-- [ ] 本地/CI 可重复运行
+- [x] 代码编译通过（npm run build）
+- [x] 类型检查通过（npm run typecheck）
+- [x] Lint 检查通过（npm run lint）
+- [x] mock 策略完成（provider/ragflow/evidence）
+- [x] Happy path 用例完成
+- [x] Cancel 用例完成
+- [x] Error/Retry 用例完成
+- [x] Isolation 用例完成
+- [x] 本地/CI 可重复运行
 
 # Output
 - 输出（强制包含以下内容）：
@@ -1241,11 +1241,11 @@
   - 回归保障：上述用例集在 CI/本地可重复运行，失败必须阻断
 
 # Checklist
-- [ ] 注入/越狱用例库完成
-- [ ] 伪造引用用例库完成
-- [ ] guardrails 回归测试完成
-- [ ] citations 合规回归测试完成
-- [ ] CI/本地可重复运行
+- [x] 注入/越狱用例库完成
+- [x] 伪造引用用例库完成
+- [x] guardrails 回归测试完成
+- [x] citations 合规回归测试完成
+- [x] CI/本地可重复运行
 
 # Output
 - 输出（强制包含以下内容）：
@@ -1365,14 +1365,14 @@
   - CI：workflow 在 PR 上触发并执行 lint/typecheck/test/build，失败则阻断
 
 # Checklist
-- [ ] 代码编译通过（npm run build）
-- [ ] 类型检查通过（npm run typecheck）
-- [ ] Lint 检查通过（npm run lint）
-- [ ] CI 配置文件落盘（workflow）
-- [ ] CI 覆盖 lint/typecheck/test/build
-- [ ] CI 失败阻断合入
-- [ ] 缓存策略配置（可选）
-- [ ] 发布检查清单落盘（docs/release-checklist.md）
+- [x] 代码编译通过（npm run build）
+- [x] 类型检查通过（npm run typecheck）
+- [x] Lint 检查通过（npm run lint）
+- [x] CI 配置文件落盘（workflow）
+- [x] CI 覆盖 lint/typecheck/test/build
+- [x] CI 失败阻断合入
+- [x] 缓存策略配置（可选）
+- [x] 发布检查清单落盘（docs/release-checklist.md）
 - [ ] 在 CI 中至少跑通一次
 
 # Output

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "happy": {
+    "chunks": ["Hello", " ", "world"],
+    "tokenDelayMs": 0
+  },
+  "cancel": {
+    "chunks": 200,
+    "chunkPrefix": "t",
+    "tokenDelayMs": 50
+  },
+  "error": {
+    "chunks": ["Hello", " ", "world"],
+    "forceErrorAtIndex": 1,
+    "errorMessage": "Mock provider error",
+    "tokenDelayMs": 0
+  }
+}
