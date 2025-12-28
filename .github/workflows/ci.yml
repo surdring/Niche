@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality-gates:
@@ -33,7 +33,27 @@ jobs:
         run: npm run typecheck
 
       - name: Test
+        id: test
         run: npm run test
+        continue-on-error: true
+
+      - name: Upload test artifacts
+        if: ${{ steps.test.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          if-no-files-found: ignore
+          path: |
+            **/test-results/**
+            **/coverage/**
+            **/junit.xml
+            **/vitest*.xml
+            **/playwright-report/**
 
       - name: Build
+        if: ${{ steps.test.outcome != 'failure' }}
         run: npm run build
+
+      - name: Fail CI if tests failed
+        if: ${{ steps.test.outcome == 'failure' }}
+        run: exit 1

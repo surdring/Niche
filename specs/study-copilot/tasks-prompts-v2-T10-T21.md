@@ -1373,7 +1373,7 @@
 - [x] CI 失败阻断合入
 - [x] 缓存策略配置（可选）
 - [x] 发布检查清单落盘（docs/release-checklist.md）
-- [ ] 在 CI 中至少跑通一次
+- [x] 在 CI 中至少跑通一次
 
 # Output
 - 输出（强制包含以下内容）：
@@ -1510,14 +1510,14 @@
   - 校验测试：runbook 覆盖至少 3 类常见故障（provider 超时、RAGFlow 不可用、citations 降级/unavailable）
 
 # Checklist
-- [ ] 代码编译通过（npm run build）
-- [ ] 类型检查通过（npm run typecheck）
-- [ ] Lint 检查通过（npm run lint）
-- [ ] runbook 文档落盘（docs/runbook.md）
-- [ ] 本地启动步骤清晰（install/dev/build/test）
-- [ ] 常见故障覆盖（provider/ragflow/citations）
-- [ ] requestId 排查路径覆盖（UI -> API -> logs）
-- [ ] 文档可被新同学复用（可验收）
+- [x] 代码编译通过（npm run build）
+- [x] 类型检查通过（npm run typecheck）
+- [x] Lint 检查通过（npm run lint）
+- [x] runbook 文档落盘（docs/runbook.md）
+- [x] 本地启动步骤清晰（install/dev/build/test）
+- [x] 常见故障覆盖（provider/ragflow/citations）
+- [x] requestId 排查路径覆盖（UI -> API -> logs）
+- [x] 文档可被新同学复用（可验收）
 
 # Output
 - 输出（强制包含以下内容）：

@@ -22,20 +22,26 @@ describe("ci/ci-workflow.contract", () => {
     const found = {
       onPullRequest: mustInclude(content, "pull_request"),
       onPush: mustInclude(content, "push"),
+      concurrencyMainKeepsHistory: mustInclude(content, "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}"),
       lint: mustInclude(content, "npm run lint"),
       typecheck: mustInclude(content, "npm run typecheck"),
       test: mustInclude(content, "npm run test"),
-      build: mustInclude(content, "npm run build")
+      build: mustInclude(content, "npm run build"),
+      uploadArtifactsOnFailure: mustInclude(content, "actions/upload-artifact@v4"),
+      uploadArtifactsIgnoreMissing: mustInclude(content, "if-no-files-found: ignore")
     };
 
     const FoundSchema = z
       .object({
         onPullRequest: z.string().min(1),
         onPush: z.string().min(1),
+        concurrencyMainKeepsHistory: z.string().min(1),
         lint: z.string().min(1),
         typecheck: z.string().min(1),
         test: z.string().min(1),
-        build: z.string().min(1)
+        build: z.string().min(1),
+        uploadArtifactsOnFailure: z.string().min(1),
+        uploadArtifactsIgnoreMissing: z.string().min(1)
       })
       .strict();
 

@@ -15,6 +15,7 @@
 - [ ] 告警通知渠道已配置（例如 Slack/Email）
 
 ## 回滚/降级策略
+- [ ] 数据库备份（如适用）
 - [ ] 记录当前版本号（Git SHA）
 - [ ] 准备回滚方案（revert commit / 回滚到上一个 tag）
 - [ ] 关键依赖不可用时的降级策略已明确（例如 RAGFlow 不可用时降级为无检索/无证据模式）
@@ -25,3 +26,10 @@
 - [ ] `npm run typecheck`
 - [ ] `npm run test`
 - [ ] `npm run build`
+
+## CI 缓存策略说明
+- [ ] CI 使用 `actions/setup-node` 的 `cache: npm`
+- [ ] 缓存 key 绑定 `package-lock.json`（lockfile 变更会导致缓存失效并重新安装依赖）
+
+## 可选自动化预检查
+- [ ] 运行 `./scripts/pre-release-check.sh`（检查关键环境变量是否已设置）
