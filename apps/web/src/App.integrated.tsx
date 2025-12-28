@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TemplateSelector } from './components/TemplateSelector';
 import { ChatInterfaceIntegrated } from './components/ChatInterfaceIntegrated';
 import { KnowledgePanelIntegrated } from './components/KnowledgePanelIntegrated';
 import { AppState, ChatSession, ScenarioTemplate, Citation } from './types';
-import { SCENARIO_TEMPLATES } from './constants/templates';
 import { listTemplates, createTask, type CreateTaskInput } from './lib/api/graphql';
 import type { GraphqlTemplate } from '@niche/core/contracts';
 
@@ -47,25 +46,15 @@ function App() {
     const loadTemplates = async () => {
       try {
         setIsLoadingTemplates(true);
-        
-        // 直接使用本地模板，不从后端加载
-        // 这样可以确保 UI 展示的是精心设计的模板
-        console.log('[Templates] Using local templates only:', SCENARIO_TEMPLATES.length);
-        setTemplates(SCENARIO_TEMPLATES);
-        
-        // 可选：在后台加载后端模板用于验证，但不显示
         const requestId = `req_web_${Math.random().toString(16).slice(2)}`;
-        listTemplates({ tenantId, projectId, requestId })
-          .then(templateList => {
-            console.log('[Templates] Backend has', templateList.length, 'templates (not displayed)');
-          })
-          .catch(error => {
-            console.warn('[Templates] Backend templates unavailable:', error.message);
-          });
-          
+        const templateList = await listTemplates({ tenantId, projectId, requestId });
+        
+        const converted = templateList.map(convertGraphqlTemplate);
+        setTemplates(converted);
       } catch (error) {
         console.error('Failed to load templates:', error);
-        setTemplates(SCENARIO_TEMPLATES);
+        // 降级：使用本地模板
+        // setTemplates(SCENARIO_TEMPLATES);
       } finally {
         setIsLoadingTemplates(false);
       }
